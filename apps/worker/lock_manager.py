@@ -4,7 +4,7 @@ import time
 import random
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class LockManager:
         Initialize lock manager.
         
         Args:
-            lock_path: Full path to lock file (e.g., C:\XHive\locks\x_session.lock)
+            lock_path: Full path to lock file
             timeout: Acquisition timeout in seconds (default: 180)
             stale: Lock stale timeout in seconds (default: 600)
         """
@@ -61,7 +61,7 @@ class LockManager:
         return {
             "pid": self._get_current_pid(),
             "process_name": "x-hive-worker",
-            "created_at_utc": datetime.utcnow().isoformat() + "Z",
+            "created_at_utc": datetime.now(timezone.utc).isoformat(),
         }
 
     def _read_lock_file(self) -> Optional[dict]:
@@ -78,9 +78,9 @@ class LockManager:
     def _is_lock_stale(self, lock_data: dict) -> bool:
         """Check if lock is stale (older than stale timeout)"""
         try:
-            created_at_str = lock_data.get("created_at_utc", "").rstrip("Z")
+            created_at_str = lock_data.get("created_at_utc", "")
             created_at = datetime.fromisoformat(created_at_str)
-            age_seconds = (datetime.utcnow() - created_at).total_seconds()
+            age_seconds = (datetime.now(timezone.utc) - created_at).total_seconds()
             return age_seconds > self.stale
         except (ValueError, KeyError):
             logger.warning("Could not parse lock creation time; assuming stale")
@@ -89,7 +89,6 @@ class LockManager:
     def _is_process_running(self, pid: int) -> bool:
         """Check if process with given PID is running (Windows-specific)"""
         try:
-            # On Windows, check if process exists via tasklist or psutil
             import subprocess
             result = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}"],
@@ -100,7 +99,6 @@ class LockManager:
             return str(pid) in result.stdout
         except Exception as e:
             logger.debug(f"Could not check process status: {e}")
-            # Assume process is running if we can't determine
             return True
 
     def _remove_lock_file_with_retry(self, max_retries: int = 10) -> bool:
@@ -120,7 +118,6 @@ class LockManager:
                     logger.info(f"Lock file removed (attempt {attempt + 1})")
                     return True
             except PermissionError:
-                # File locked by another process; backoff and retry
                 backoff = random.uniform(0.2, 0.6)
                 logger.debug(f"Lock file busy; retrying in {backoff:.2f}s (attempt {attempt + 1}/{max_retries})")
                 time.sleep(backoff)
@@ -149,7 +146,6 @@ class LockManager:
         while time.time() - start_time < self.timeout:
             attempt += 1
 
-            # Check if lock already exists
             if self.lock_path.exists():
                 existing_lock = self._read_lock_file()
 
@@ -158,29 +154,23 @@ class LockManager:
                     is_stale = self._is_lock_stale(existing_lock)
 
                     if is_stale:
-                        # Lock is stale; check if process still running
                         if self._is_process_running(existing_pid):
                             raise LockStaleButBusyError(
                                 f"Lock is stale but process {existing_pid} still running"
                             )
-                        # Process not running; remove stale lock
                         logger.info(f"Removing stale lock (age > {self.stale}s)")
                         if not self._remove_lock_file_with_retry():
                             raise LockTimeoutError("Could not remove stale lock")
-                        # Retry acquisition
                         continue
                     else:
-                        # Lock is fresh; check if owned by another process
                         current_pid = self._get_current_pid()
                         if existing_pid != current_pid:
                             raise LockOwnedByAnotherProcessError(
                                 f"Lock owned by PID {existing_pid} (current: {current_pid})"
                             )
 
-                # If we reach here, lock exists but is ours; break
                 break
 
-            # Try to create lock file
             try:
                 self.lock_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(self.lock_path, "w") as f:
@@ -209,13 +199,11 @@ class LockManager:
             logger.warning("Lock file does not exist; nothing to release")
             return False
 
-        # Verify we own the lock
         lock_data = self._read_lock_file()
         if lock_data and lock_data.get("pid") != self._get_current_pid():
             logger.error(f"Lock owned by PID {lock_data.get('pid')}; cannot release")
             return False
 
-        # Remove lock file with retry
         success = self._remove_lock_file_with_retry()
         if success:
             self._lock_acquired = False

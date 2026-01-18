@@ -10,10 +10,13 @@ type HealthResponse = {
   timestamp?: string;
 };
 
+type ApiResponse = Record<string, unknown>;
+
 function App() {
-  const [data, setData] = useState<HealthResponse | null>(null);
+  const [data, setData] = useState<HealthResponse | ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<"health" | "lock">("health");
 
   const checkHealth = async () => {
     setLoading(true);
@@ -26,6 +29,22 @@ function App() {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       setError(`Failed to invoke health: ${msg}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const callWorkerApi = async (method: "GET" | "POST", endpoint: string) => {
+    setLoading(true);
+    setError(null);
+    setData(null);
+    try {
+      const response = await invoke<string>("call_worker_api", { method, endpoint });
+      const json: ApiResponse = JSON.parse(response);
+      setData(json);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      setError(`API call failed: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -59,25 +78,123 @@ function App() {
           X-HIVE Control Panel
         </h1>
 
-        <button
-          onClick={checkHealth}
-          disabled={loading}
-          style={{
-            width: "100%",
-            padding: "12px 16px",
-            borderRadius: "8px",
-            border: "none",
-            backgroundColor: loading ? "#2563eb" : "#3b82f6",
-            color: "white",
-            fontSize: "16px",
-            fontWeight: 600,
-            cursor: loading ? "not-allowed" : "pointer",
-            transition: "background-color 0.2s ease",
-            marginBottom: "16px",
-          }}
-        >
-          {loading ? "Checking..." : "Check Worker Health"}
-        </button>
+        <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+          <button
+            onClick={() => setActiveTab("health")}
+            style={{
+              flex: 1,
+              padding: "10px 12px",
+              borderRadius: "6px",
+              border: "none",
+              backgroundColor: activeTab === "health" ? "#3b82f6" : "#374151",
+              color: "white",
+              fontSize: "14px",
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "background-color 0.2s ease",
+            }}
+          >
+            Health
+          </button>
+          <button
+            onClick={() => setActiveTab("lock")}
+            style={{
+              flex: 1,
+              padding: "10px 12px",
+              borderRadius: "6px",
+              border: "none",
+              backgroundColor: activeTab === "lock" ? "#3b82f6" : "#374151",
+              color: "white",
+              fontSize: "14px",
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "background-color 0.2s ease",
+            }}
+          >
+            Lock Manager
+          </button>
+        </div>
+
+        {activeTab === "health" && (
+          <button
+            onClick={checkHealth}
+            disabled={loading}
+            style={{
+              width: "100%",
+              padding: "12px 16px",
+              borderRadius: "8px",
+              border: "none",
+              backgroundColor: loading ? "#2563eb" : "#3b82f6",
+              color: "white",
+              fontSize: "16px",
+              fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
+              transition: "background-color 0.2s ease",
+              marginBottom: "16px",
+            }}
+          >
+            {loading ? "Checking..." : "Check Worker Health"}
+          </button>
+        )}
+
+        {activeTab === "lock" && (
+          <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+            <button
+              onClick={() => callWorkerApi("POST", "/lock/acquire")}
+              disabled={loading}
+              style={{
+                flex: 1,
+                padding: "12px 16px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: loading ? "#16a34a" : "#22c55e",
+                color: "white",
+                fontSize: "14px",
+                fontWeight: 600,
+                cursor: loading ? "not-allowed" : "pointer",
+                transition: "background-color 0.2s ease",
+              }}
+            >
+              {loading ? "..." : "Acquire Lock"}
+            </button>
+            <button
+              onClick={() => callWorkerApi("POST", "/lock/release")}
+              disabled={loading}
+              style={{
+                flex: 1,
+                padding: "12px 16px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: loading ? "#dc2626" : "#ef4444",
+                color: "white",
+                fontSize: "14px",
+                fontWeight: 600,
+                cursor: loading ? "not-allowed" : "pointer",
+                transition: "background-color 0.2s ease",
+              }}
+            >
+              {loading ? "..." : "Release Lock"}
+            </button>
+            <button
+              onClick={() => callWorkerApi("GET", "/lock/status")}
+              disabled={loading}
+              style={{
+                flex: 1,
+                padding: "12px 16px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: loading ? "#2563eb" : "#3b82f6",
+                color: "white",
+                fontSize: "14px",
+                fontWeight: 600,
+                cursor: loading ? "not-allowed" : "pointer",
+                transition: "background-color 0.2s ease",
+              }}
+            >
+              {loading ? "..." : "Check Status"}
+            </button>
+          </div>
+        )}
 
         {error && (
           <div
