@@ -1,0 +1,23 @@
+# Node
+node_modules/
+dist/
+
+# Rust/Tauri
+target/
+
+# Python
+__pycache__/
+.venv/
+venv/
+*.pyc
+
+# Environment
+.env
+
+# Logs & Data
+*.log
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db

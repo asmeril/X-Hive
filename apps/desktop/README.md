@@ -1,7 +1,20 @@
-# Tauri + React + Typescript
+# Desktop UI (Tauri + React)
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+Tauri + React-based user interface for X-HIVE.
 
-## Recommended IDE Setup
+## Overview
+- Worker'a localhost API ile bağlanır
+- Seed accounts yönetimi
+- Draft review ve approval workflow
+- Telegram onay entegrasyonu (SEND / EDIT / SKIP)
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## Architecture
+- **Framework**: Tauri (Rust backend) + React (TypeScript frontend)
+- **API Client**: Fetch API (http://localhost:8765)
+- **State Management**: React hooks
+- **Styling**: Inline CSS / Tailwind CSS
+
+## Features
+- Real-time worker status monitoring
+- Post approval interface
+- Telegram notification integration
