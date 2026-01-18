@@ -1,140 +1,124 @@
 import { useState } from "react";
-import { useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
-interface HealthResponse {
+type HealthResponse = {
   status: string;
-  timestamp: string;
-}
+  worker?: string;
+  lock_path?: string;
+  data_path?: string;
+  timestamp?: string;
+};
 
 function App() {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [data, setData] = useState<HealthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
 
-  const fetchHealth = async () => {
-    setIsLoading(true);
+  const checkHealth = async () => {
+    setLoading(true);
     setError(null);
+    setData(null);
     try {
-      const response = await fetch("http://127.0.0.1:8765/health");
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const data: HealthResponse = await response.json();
-      setHealth(data);
-    } catch (err) {
-      setError("Worker offline");
-      setHealth(null);
+      const response = await invoke<string>("check_worker_health");
+      const json: HealthResponse = JSON.parse(response);
+      setData(json);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      setError(`Failed to invoke health: ${msg}`);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
-
-  useEffect(() => {
-    fetchHealth();
-  }, []);
 
   return (
     <main
       style={{
         display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
         minHeight: "100vh",
-        backgroundColor: "#0f0f0f",
-        fontFamily: "system-ui, -apple-system, sans-serif",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#0f172a",
+        color: "#e5e7eb",
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+        padding: "24px",
       }}
     >
       <div
         style={{
-          backgroundColor: "#1a1a1a",
-          border: "1px solid #333",
-          borderRadius: "8px",
-          padding: "32px",
-          maxWidth: "500px",
           width: "100%",
-          boxShadow: "0 4px 12px rgba(0, 0, 0, 0.5)",
+          maxWidth: "640px",
+          backgroundColor: "#111827",
+          border: "1px solid #374151",
+          borderRadius: "12px",
+          padding: "24px",
+          boxShadow: "0 10px 25px rgba(0,0,0,0.3)",
         }}
       >
-        <h1 style={{ marginTop: 0, color: "#fff", textAlign: "center" }}>
-          X-HIVE Worker Status
+        <h1 style={{ marginTop: 0, marginBottom: 16, textAlign: "center" }}>
+          X-HIVE Control Panel
         </h1>
 
-        {isLoading && <p style={{ textAlign: "center", color: "#888" }}>Connecting...</p>}
+        <button
+          onClick={checkHealth}
+          disabled={loading}
+          style={{
+            width: "100%",
+            padding: "12px 16px",
+            borderRadius: "8px",
+            border: "none",
+            backgroundColor: loading ? "#2563eb" : "#3b82f6",
+            color: "white",
+            fontSize: "16px",
+            fontWeight: 600,
+            cursor: loading ? "not-allowed" : "pointer",
+            transition: "background-color 0.2s ease",
+            marginBottom: "16px",
+          }}
+        >
+          {loading ? "Checking..." : "Check Worker Health"}
+        </button>
 
         {error && (
           <div
             style={{
-              backgroundColor: "#3a1a1a",
-              border: "1px solid #ff4444",
-              borderRadius: "4px",
+              backgroundColor: "#7f1d1d",
+              border: "1px solid #ef4444",
+              color: "#fecaca",
               padding: "12px",
-              color: "#ff6666",
+              borderRadius: "8px",
+              marginBottom: "12px",
               textAlign: "center",
-              marginBottom: "16px",
             }}
           >
             {error}
           </div>
         )}
 
-        {health && (
-          <div style={{ marginBottom: "24px" }}>
-            <div style={{ marginBottom: "12px" }}>
-              <label style={{ color: "#aaa", fontSize: "12px" }}>Status:</label>
-              <p
-                style={{
-                  margin: "4px 0 0 0",
-                  color: "#4ade80",
-                  fontSize: "18px",
-                  fontWeight: "bold",
-                }}
-              >
-                {health.status.toUpperCase()}
-              </p>
-            </div>
-            <div>
-              <label style={{ color: "#aaa", fontSize: "12px" }}>Timestamp:</label>
-              <p
-                style={{
-                  margin: "4px 0 0 0",
-                  color: "#888",
-                  fontSize: "12px",
-                  fontFamily: "monospace",
-                  wordBreak: "break-all",
-                }}
-              >
-                {health.timestamp}
-              </p>
-            </div>
-          </div>
+        {data && (
+          <pre
+            style={{
+              backgroundColor: "#0b1020",
+              border: "1px solid #1f2937",
+              borderRadius: "8px",
+              padding: "16px",
+              overflowX: "auto",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontSize: "13px",
+              lineHeight: 1.6,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {JSON.stringify(data, null, 2)}
+          </pre>
         )}
 
-        <button
-          onClick={fetchHealth}
-          disabled={isLoading}
-          style={{
-            width: "100%",
-            padding: "12px",
-            backgroundColor: "#0ea5e9",
-            color: "#fff",
-            border: "none",
-            borderRadius: "6px",
-            fontSize: "16px",
-            fontWeight: "bold",
-            cursor: isLoading ? "not-allowed" : "pointer",
-            opacity: isLoading ? 0.6 : 1,
-            transition: "all 0.2s",
-          }}
-          onMouseEnter={(e) => {
-            if (!isLoading) (e.target as HTMLButtonElement).style.backgroundColor = "#0284c7";
-          }}
-          onMouseLeave={(e) => {
-            (e.target as HTMLButtonElement).style.backgroundColor = "#0ea5e9";
-          }}
-        >
-          {isLoading ? "Refreshing..." : "Refresh"}
-        </button>
+        {!data && !error && (
+          <p style={{ textAlign: "center", color: "#9ca3af" }}>
+            Click "Check Worker Health" to query the local worker.
+          </p>
+        )}
       </div>
     </main>
   );

@@ -1,4 +1,8 @@
 ﻿fastapi
 uvicorn[standard]
 pydantic
+pydantic-settings
 playwright
+python-telegram-bot
+httpx
+aiosqlite

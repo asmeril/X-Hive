@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "npm",
+  "productName": "x-hive-desktop",
   "version": "0.1.0",
-  "identifier": "com.asmeril.npm",
+  "identifier": "com.asmeril.x-hive-desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,15 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "npm",
+        "title": "x-hive-desktop",
         "width": 800,
         "height": 600
       }
     ],
     "security": {
-      "csp": {
-        "connect-src": "http://localhost:8765 http://127.0.0.1:8765"
-      }
+      "csp": null
     }
   },
   "bundle": {
