@@ -8,6 +8,7 @@ import sys
 from config import settings
 from lock_manager import LockManager, LockTimeoutError, LockStaleButBusyError
 from chrome_pool import ChromePool, shutdown_chrome_pool
+from task_queue import TaskQueue, shutdown_task_queue
 
 # Initialize lock manager
 lock_manager = LockManager(
@@ -18,6 +19,9 @@ lock_manager = LockManager(
 
 # Initialize Chrome pool
 chrome_pool = ChromePool()
+
+# Initialize task queue
+task_queue = TaskQueue()
 
 
 @asynccontextmanager
@@ -50,11 +54,24 @@ async def lifespan(app: FastAPI):
         print(f"⚠️  Chrome pool initialization failed: {e}")
         # Don't exit - Chrome pool is optional for now
     
+    # Initialize task queue on startup
+    try:
+        await task_queue.start()
+        print(f"✅ Task queue started")
+    except Exception as e:
+        print(f"⚠️  Task queue initialization failed: {e}")
+    
     yield
     
     # Shutdown
     print("🔓 Releasing lock...")
     lock_manager.release_lock()
+    
+    # Shutdown task queue
+    try:
+        await shutdown_task_queue()
+    except Exception as e:
+        print(f"⚠️  Task queue shutdown error: {e}")
     
     # Shutdown Chrome pool
     try:
@@ -157,6 +174,60 @@ async def lock_status():
             return {"locked": True, "error": str(e)}
     else:
         return {"locked": False}
+
+
+@app.post("/tasks/add")
+async def add_task(task_type: str, payload: dict, priority: int = 1):
+    """Add a new task to the queue"""
+    try:
+        task_id = await task_queue.add_task(task_type, payload, priority)
+        return {
+            "status": "ok",
+            "task_id": task_id,
+            "message": f"Task added: {task_type}"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.get("/tasks/status/{task_id}")
+async def get_task_status(task_id: str):
+    """Get status of a specific task"""
+    try:
+        task = await task_queue.get_task_status(task_id)
+        if task is None:
+            return {
+                "status": "error",
+                "error": f"Task not found: {task_id}"
+            }
+        return {
+            "status": "ok",
+            "task": task.to_dict()
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.get("/tasks/queue-status")
+async def get_queue_status():
+    """Get current queue statistics"""
+    try:
+        stats = await task_queue.get_queue_status()
+        return {
+            "status": "ok",
+            "queue": stats
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
 
 if __name__ == "__main__":
