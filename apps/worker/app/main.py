@@ -1,10 +1,13 @@
 ﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from config import settings
-from lock_manager import LockManager, LockTimeoutError, LockStaleButBusyError
+import asyncio
 import os
 import sys
+
+from config import settings
+from lock_manager import LockManager, LockTimeoutError, LockStaleButBusyError
+from chrome_pool import ChromePool, shutdown_chrome_pool
 
 # Initialize lock manager
 lock_manager = LockManager(
@@ -13,12 +16,16 @@ lock_manager = LockManager(
     stale=settings.LOCK_STALE_SECONDS if hasattr(settings, 'LOCK_STALE_SECONDS') else 600,
 )
 
+# Initialize Chrome pool
+chrome_pool = ChromePool()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     os.makedirs(os.path.dirname(settings.LOCK_PATH), exist_ok=True)
     os.makedirs(settings.DATA_PATH, exist_ok=True)
+    os.makedirs(settings.BROWSER_DATA_DIR, exist_ok=True)
     print(f"✅ Worker started | Lock: {settings.LOCK_PATH}")
     
     # Acquire lock on startup
@@ -35,11 +42,26 @@ async def lifespan(app: FastAPI):
         print(f"❌ Lock error: {e}")
         sys.exit(1)
     
+    # Initialize Chrome pool on startup
+    try:
+        await chrome_pool.initialize()
+        print(f"✅ Chrome pool initialized")
+    except Exception as e:
+        print(f"⚠️  Chrome pool initialization failed: {e}")
+        # Don't exit - Chrome pool is optional for now
+    
     yield
     
     # Shutdown
     print("🔓 Releasing lock...")
     lock_manager.release_lock()
+    
+    # Shutdown Chrome pool
+    try:
+        await shutdown_chrome_pool()
+    except Exception as e:
+        print(f"⚠️  Chrome pool shutdown error: {e}")
+    
     print("✅ Shutdown complete")
 
 
@@ -62,6 +84,43 @@ async def health():
         "lock_path": settings.LOCK_PATH,
         "data_path": settings.DATA_PATH,
     }
+
+
+@app.get("/chrome/status")
+async def chrome_status():
+    """Get Chrome pool status"""
+    try:
+        is_healthy = await chrome_pool.is_healthy()
+        return {
+            "status": "ok",
+            "chrome_pool": {
+                "initialized": chrome_pool.browser is not None,
+                "healthy": is_healthy,
+                "page_open": chrome_pool.page is not None and not chrome_pool.page.is_closed(),
+                "cookie_path": str(chrome_pool.cookie_path),
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.post("/chrome/restart")
+async def chrome_restart():
+    """Restart Chrome pool"""
+    try:
+        await chrome_pool.restart()
+        return {
+            "status": "ok",
+            "message": "Chrome pool restarted"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
 
 @app.post("/lock/acquire")
