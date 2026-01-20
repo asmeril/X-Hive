@@ -9,6 +9,7 @@ from config import settings
 from lock_manager import LockManager, LockTimeoutError, LockStaleButBusyError
 from chrome_pool import ChromePool, shutdown_chrome_pool
 from task_queue import TaskQueue, shutdown_task_queue
+from x_daemon import XDaemon, shutdown_x_daemon
 
 # Initialize lock manager
 lock_manager = LockManager(
@@ -22,6 +23,9 @@ chrome_pool = ChromePool()
 
 # Initialize task queue
 task_queue = TaskQueue()
+
+# Initialize X-Daemon
+x_daemon = XDaemon()
 
 
 @asynccontextmanager
@@ -61,11 +65,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️  Task queue initialization failed: {e}")
     
+    # Initialize X-Daemon on startup
+    try:
+        await x_daemon.start()
+        print(f"✅ X-Daemon started")
+    except Exception as e:
+        print(f"⚠️  X-Daemon initialization failed: {e}")
+    
     yield
     
     # Shutdown
     print("🔓 Releasing lock...")
     lock_manager.release_lock()
+    
+    # Shutdown X-Daemon
+    try:
+        await shutdown_x_daemon()
+    except Exception as e:
+        print(f"⚠️  X-Daemon shutdown error: {e}")
     
     # Shutdown task queue
     try:
@@ -222,6 +239,134 @@ async def get_queue_status():
         return {
             "status": "ok",
             "queue": stats
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.get("/daemon/status")
+async def daemon_status():
+    """Get X-Daemon status"""
+    try:
+        status = await x_daemon.get_status()
+        return {
+            "status": "ok",
+            "daemon": status
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.post("/daemon/start")
+async def daemon_start():
+    """Start X-Daemon"""
+    try:
+        result = await x_daemon.start()
+        return {
+            "status": "ok",
+            "result": result
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.post("/daemon/stop")
+async def daemon_stop():
+    """Stop X-Daemon"""
+    try:
+        result = await x_daemon.stop()
+        return {
+            "status": "ok",
+            "result": result
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.post("/daemon/restart")
+async def daemon_restart():
+    """Restart X-Daemon"""
+    try:
+        result = await x_daemon.restart()
+        return {
+            "status": "ok",
+            "result": result
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.post("/x/post")
+async def x_post_tweet(text: str, images: list = None):
+    """Post a tweet via X-Daemon"""
+    try:
+        result = await x_daemon.post_tweet(text, images)
+        return {
+            "status": "ok",
+            "result": result
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.post("/x/reply")
+async def x_reply_tweet(tweet_url: str, text: str):
+    """Reply to a tweet via X-Daemon"""
+    try:
+        result = await x_daemon.reply_to_tweet(tweet_url, text)
+        return {
+            "status": "ok",
+            "result": result
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.post("/x/like")
+async def x_like_tweet(tweet_url: str):
+    """Like a tweet via X-Daemon"""
+    try:
+        result = await x_daemon.like_tweet(tweet_url)
+        return {
+            "status": "ok",
+            "result": result
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.post("/x/retweet")
+async def x_retweet(tweet_url: str):
+    """Retweet a tweet via X-Daemon"""
+    try:
+        result = await x_daemon.retweet(tweet_url)
+        return {
+            "status": "ok",
+            "result": result
         }
     except Exception as e:
         return {

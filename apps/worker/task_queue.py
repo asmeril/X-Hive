@@ -248,18 +248,25 @@ class TaskQueue:
                         continue
 
                     try:
-                        # Get page from ChromePool
-                        page = await self.chrome_pool.get_page()
+                        # Execute task via XDaemon
+                        # Import here to avoid circular dependency
+                        from x_daemon import XDaemon
+                        
+                        daemon = XDaemon()
+                        result = await daemon.execute_task(task)
 
-                        # Execute task (placeholder - will be implemented per task type)
-                        await self._execute_task(task, page)
-
-                        # Mark as completed
-                        task.status = TaskStatus.COMPLETED
+                        # Mark as completed or failed based on result
+                        if result.get("success"):
+                            task.status = TaskStatus.COMPLETED
+                            logger.info(f"✅ Task completed: {task.id}")
+                        else:
+                            task.status = TaskStatus.FAILED
+                            task.error = result.get("error", "Unknown error")
+                            logger.error(f"❌ Task failed: {task.id} - {task.error}")
+                        
                         task.completed_at = datetime.now(
                             datetime.now().astimezone().tzinfo
                         )
-                        logger.info(f"✅ Task completed: {task.id}")
 
                     except Exception as e:
                         logger.error(f"❌ Task execution failed: {e}")
@@ -296,53 +303,6 @@ class TaskQueue:
             except Exception as e:
                 logger.error(f"Task queue processor error: {e}", exc_info=True)
                 await asyncio.sleep(self.process_interval)
-
-    async def _execute_task(self, task: TaskItem, page) -> None:
-        """
-        Execute a specific task based on type.
-        
-        Args:
-            task: TaskItem to execute
-            page: Playwright page instance
-            
-        Raises:
-            Exception: Task-specific errors
-        """
-        task_type = task.type
-        payload = task.payload
-
-        logger.debug(f"Executing task type: {task_type}")
-
-        # Task type handlers
-        if task_type == "post_tweet":
-            # TODO: Implement post_tweet
-            # tweet_text = payload.get("text")
-            # media = payload.get("media", [])
-            pass
-
-        elif task_type == "reply":
-            # TODO: Implement reply
-            # tweet_id = payload.get("tweet_id")
-            # reply_text = payload.get("text")
-            pass
-
-        elif task_type == "like":
-            # TODO: Implement like
-            # tweet_id = payload.get("tweet_id")
-            pass
-
-        elif task_type == "retweet":
-            # TODO: Implement retweet
-            # tweet_id = payload.get("tweet_id")
-            pass
-
-        elif task_type == "follow":
-            # TODO: Implement follow
-            # user_id = payload.get("user_id")
-            pass
-
-        else:
-            raise TaskQueueError(f"Unknown task type: {task_type}")
 
     async def start(self) -> None:
         """
