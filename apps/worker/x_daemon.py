@@ -340,6 +340,12 @@ class XDaemon:
                 tweet_url = payload.get("tweet_url", "")
                 result = await self.retweet(tweet_url)
 
+            elif task_type == "quote_tweet":
+                tweet_url = payload.get("tweet_url", "")
+                text = payload.get("text", "")
+                images = payload.get("images")
+                result = await self.quote_tweet(tweet_url, text, images)
+
             else:
                 raise XDaemonError(f"Unknown task type: {task_type}")
 
@@ -635,6 +641,127 @@ class XDaemon:
 
             except Exception as e:
                 logger.error(f"Retweet failed (attempt {attempt}): {e}")
+                if attempt == self.max_retries:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                    }
+                await asyncio.sleep(2)
+
+    async def quote_tweet(
+        self, 
+        tweet_url: str, 
+        text: str, 
+        images: Optional[List[str]] = None
+    ) -> Dict:
+        """
+        Quote tweet (retweet with comment) on X.com.
+        
+        Args:
+            tweet_url: URL of the tweet to quote
+            text: Your comment text
+            images: Optional list of image file paths
+            
+        Returns:
+            dict: {
+                "success": bool,
+                "quote_tweet_url": str (if successful),
+                "error": str (if failed)
+            }
+        """
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                logger.info(f"💬 Quote tweeting (attempt {attempt}/{self.max_retries})")
+
+                page = await self.chrome_pool.get_page()
+
+                # Navigate to tweet
+                await page.goto(tweet_url, wait_until="domcontentloaded")
+                await asyncio.sleep(2)
+
+                # Click retweet button
+                retweet_button = await self._wait_for_element(
+                    page, self.SELECTORS["retweet_button"]
+                )
+                await retweet_button.click()
+                await asyncio.sleep(1)
+
+                # Click "Quote Tweet" option in the menu
+                # Note: This selector may need adjustment based on X.com's actual structure
+                try:
+                    quote_option = await self._wait_for_element(
+                        page, 'a[href*="/compose/tweet"]', timeout=5000
+                    )
+                    await quote_option.click()
+                except PlaywrightTimeoutError:
+                    # Fallback: try alternative selector
+                    quote_option = await self._wait_for_element(
+                        page, 'div[role="menuitem"]', timeout=5000
+                    )
+                    # Get all menu items and click the second one (Quote Tweet)
+                    menu_items = await page.locator('div[role="menuitem"]').all()
+                    if len(menu_items) >= 2:
+                        await menu_items[1].click()
+                    else:
+                        await quote_option.click()
+
+                await asyncio.sleep(2)
+
+                # Wait for compose dialog to open
+                compose_box = await self._wait_for_element(
+                    page, self.SELECTORS["tweet_compose"]
+                )
+                
+                # Type quote comment
+                await compose_box.fill(text)
+                await asyncio.sleep(1)
+
+                # Upload images if provided
+                if images:
+                    for image_path in images:
+                        try:
+                            upload_input = await page.locator(
+                                self.SELECTORS["upload_button"]
+                            ).first
+                            await upload_input.set_input_files(image_path)
+                            await asyncio.sleep(1)
+                        except Exception as e:
+                            logger.warning(f"Image upload failed: {e}")
+
+                # Click post button (different selector for quote tweets)
+                try:
+                    post_button = await self._wait_for_element(
+                        page, 'div[data-testid="tweetButton"]'
+                    )
+                except PlaywrightTimeoutError:
+                    # Fallback to inline button
+                    post_button = await self._wait_for_element(
+                        page, self.SELECTORS["post_button"]
+                    )
+                
+                await post_button.click()
+
+                # Wait for post confirmation
+                await asyncio.sleep(3)
+
+                logger.info("✅ Quote tweet posted successfully")
+                return {
+                    "success": True,
+                    "quote_tweet_url": page.url,  # URL after posting
+                    "text": text,
+                }
+
+            except PlaywrightTimeoutError as e:
+                logger.warning(f"Quote tweet timeout (attempt {attempt}): {e}")
+                if attempt == self.max_retries:
+                    return {
+                        "success": False,
+                        "error": f"Timeout after {self.max_retries} attempts",
+                    }
+                await asyncio.sleep(2)
+
+            except Exception as e:
+                logger.error(f"Quote tweet failed (attempt {attempt}): {e}")
                 if attempt == self.max_retries:
                     return {
                         "success": False,

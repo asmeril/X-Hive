@@ -375,6 +375,22 @@ async def x_retweet(tweet_url: str):
         }
 
 
+@app.post("/x/quote")
+async def x_quote_tweet(tweet_url: str, text: str, images: list = None):
+    """Quote tweet (retweet with comment) via X-Daemon"""
+    try:
+        result = await x_daemon.quote_tweet(tweet_url, text, images)
+        return {
+            "status": "ok",
+            "result": result
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
 if __name__ == "__main__":
     import uvicorn
 

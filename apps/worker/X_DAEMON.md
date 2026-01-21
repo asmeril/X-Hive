@@ -219,6 +219,33 @@ result = await daemon.retweet(
 3. Confirm retweet
 4. Wait for confirmation
 
+#### Quote Tweet
+
+```python
+result = await daemon.quote_tweet(
+    tweet_url="https://x.com/user/status/12345",
+    text="This is brilliant!",
+    images=["C:/path/to/image.png"]  # Optional
+)
+# {
+#     "success": true,
+#     "quote_tweet_url": "https://x.com/...",
+#     "text": "This is brilliant!"
+# }
+```
+
+**Process:**
+1. Navigate to tweet URL
+2. Click retweet button
+3. Click "Quote Tweet" option (not "Retweet")
+4. Wait for compose dialog
+5. Type comment text
+6. Upload images (if provided)
+7. Click post button
+8. Wait for confirmation
+
+**Retry:** Max 2 retries on failure
+
 ### Task Execution
 
 #### Execute Task
@@ -237,6 +264,7 @@ Routes task to appropriate operation based on `task.type`:
 - `"reply"` → `reply_to_tweet()`
 - `"like"` → `like_tweet()`
 - `"retweet"` → `retweet()`
+- `"quote_tweet"` → `quote_tweet()`
 
 **Called by:** TaskQueue for each queued task
 
@@ -271,7 +299,12 @@ POST /x/like            - Like a tweet
 
 POST /x/retweet         - Retweet a tweet
   Query: tweet_url
+
+POST /x/quote           - Quote tweet (retweet with comment)
+  Query: tweet_url, text, images (optional)
 ```
+
+**Total Endpoints:** 18 (4 daemon lifecycle + 4 lock + 3 tasks + 2 chrome + 5 X operations)
 
 ## Playwright Selectors
 
