@@ -17,6 +17,8 @@ from config import settings
 from chrome_pool import ChromePool
 from task_queue import TaskQueue, TaskItem, TaskStatus
 from lock_manager import LockManager
+from rate_limiter import get_rate_limiter, OperationType
+from human_behavior import HumanBehavior
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,9 @@ class XDaemon:
             timeout=180,
             stale=600,
         )
+        
+        # SAFETY: Rate limiter integration
+        self.rate_limiter = get_rate_limiter()
 
         # State management
         self.state = DaemonState()
@@ -122,6 +127,30 @@ class XDaemon:
 
         self._initialized = True
         logger.info("XDaemon initialized")
+    
+    async def _safety_check(self, operation_type: OperationType) -> None:
+        """
+        🛡️ CRITICAL SAFETY CHECK - Run before EVERY X operation.
+        
+        Checks:
+        1. Rate limit compliance
+        2. Forces human behavior delay
+        
+        Args:
+            operation_type: Type of operation to check
+            
+        Raises:
+            XDaemonError: If operation is blocked by rate limiter
+        """
+        # Check rate limit
+        allowed, reason = self.rate_limiter.check_limit(operation_type)
+        if not allowed:
+            logger.error(f"🚫 RATE LIMIT BLOCKED: {reason}")
+            raise XDaemonError(f"Rate limit exceeded: {reason}")
+        
+        # Add mandatory human behavior delay
+        await HumanBehavior.random_delay()
+        logger.info(f"🛡️ Safety check passed for {operation_type.value}")
 
     async def start(self) -> Dict:
         """
@@ -393,6 +422,9 @@ class XDaemon:
                 "error": str (if failed)
             }
         """
+        # 🛡️ CRITICAL: Safety check BEFORE operation
+        await self._safety_check(OperationType.TWEET)
+        
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(f"📝 Posting tweet (attempt {attempt}/{self.max_retries})")
@@ -401,18 +433,17 @@ class XDaemon:
 
                 # Navigate to X.com
                 await page.goto("https://x.com/home", wait_until="domcontentloaded")
-                await asyncio.sleep(2)  # Wait for dynamic content
+                await HumanBehavior.simulate_page_load_wait()  # Human delay
 
                 # Find and click compose box
                 compose_box = await self._wait_for_element(
                     page, self.SELECTORS["tweet_compose"]
                 )
                 await compose_box.click()
-                await asyncio.sleep(0.5)
+                await HumanBehavior.random_micro_pause()  # Human delay
 
-                # Type tweet text
-                await compose_box.fill(text)
-                await asyncio.sleep(1)
+                # Type tweet text with human-like speed
+                await HumanBehavior.type_like_human(page, self.SELECTORS["tweet_compose"], text)
 
                 # Upload images if provided
                 if images:
@@ -430,12 +461,17 @@ class XDaemon:
                 post_button = await self._wait_for_element(
                     page, self.SELECTORS["post_button"]
                 )
+                await HumanBehavior.simulate_thinking()  # Think before posting
                 await post_button.click()
 
                 # Wait for post confirmation
-                await asyncio.sleep(3)
+                await HumanBehavior.anti_detection_delay()  # Anti-detection delay
 
                 logger.info("✅ Tweet posted successfully")
+                
+                # 🛡️ CRITICAL: Record operation for rate limiting
+                self.rate_limiter.record_operation(OperationType.TWEET)
+                
                 return {
                     "success": True,
                     "tweet_url": page.url,  # URL after posting
@@ -475,6 +511,9 @@ class XDaemon:
                 "error": str (if failed)
             }
         """
+        # 🛡️ CRITICAL: Safety check BEFORE operation
+        await self._safety_check(OperationType.REPLY)
+        
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(f"💬 Replying to tweet (attempt {attempt}/{self.max_retries})")
@@ -506,9 +545,13 @@ class XDaemon:
                 await post_button.click()
 
                 # Wait for confirmation
-                await asyncio.sleep(3)
+                await HumanBehavior.anti_detection_delay()
 
                 logger.info("✅ Reply posted successfully")
+                
+                # 🛡️ CRITICAL: Record operation for rate limiting
+                self.rate_limiter.record_operation(OperationType.REPLY)
+                
                 return {
                     "success": True,
                     "reply_url": page.url,
@@ -546,6 +589,9 @@ class XDaemon:
                 "error": str (if failed)
             }
         """
+        # 🛡️ CRITICAL: Safety check BEFORE operation
+        await self._safety_check(OperationType.LIKE)
+        
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(f"❤️  Liking tweet (attempt {attempt}/{self.max_retries})")
@@ -554,16 +600,21 @@ class XDaemon:
 
                 # Navigate to tweet
                 await page.goto(tweet_url, wait_until="domcontentloaded")
-                await asyncio.sleep(2)
+                await HumanBehavior.simulate_page_load_wait()
 
                 # Find and click like button
                 like_button = await self._wait_for_element(
                     page, self.SELECTORS["like_button"]
                 )
+                await HumanBehavior.simulate_thinking()
                 await like_button.click()
-                await asyncio.sleep(1)
+                await HumanBehavior.anti_detection_delay()
 
                 logger.info("✅ Tweet liked successfully")
+                
+                # 🛡️ CRITICAL: Record operation for rate limiting
+                self.rate_limiter.record_operation(OperationType.LIKE)
+                
                 return {
                     "success": True,
                     "tweet_url": tweet_url,
@@ -600,6 +651,9 @@ class XDaemon:
                 "error": str (if failed)
             }
         """
+        # 🛡️ CRITICAL: Safety check BEFORE operation
+        await self._safety_check(OperationType.RETWEET)
+        
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(f"🔁 Retweeting (attempt {attempt}/{self.max_retries})")
@@ -608,7 +662,7 @@ class XDaemon:
 
                 # Navigate to tweet
                 await page.goto(tweet_url, wait_until="domcontentloaded")
-                await asyncio.sleep(2)
+                await HumanBehavior.simulate_page_load_wait()
 
                 # Click retweet button
                 retweet_button = await self._wait_for_element(
@@ -623,8 +677,11 @@ class XDaemon:
                 )
                 await confirm_button.click()
                 await asyncio.sleep(1)
-
                 logger.info("✅ Retweet successful")
+                
+                # 🛡️ CRITICAL: Record operation for rate limiting
+                self.rate_limiter.record_operation(OperationType.RETWEET)
+                
                 return {
                     "success": True,
                     "tweet_url": tweet_url,
@@ -669,6 +726,9 @@ class XDaemon:
                 "error": str (if failed)
             }
         """
+        # 🛡️ CRITICAL: Safety check BEFORE operation
+        await self._safety_check(OperationType.QUOTE)
+        
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(f"💬 Quote tweeting (attempt {attempt}/{self.max_retries})")
@@ -677,7 +737,7 @@ class XDaemon:
 
                 # Navigate to tweet
                 await page.goto(tweet_url, wait_until="domcontentloaded")
-                await asyncio.sleep(2)
+                await HumanBehavior.simulate_page_load_wait()
 
                 # Click retweet button
                 retweet_button = await self._wait_for_element(
@@ -739,12 +799,17 @@ class XDaemon:
                         page, self.SELECTORS["post_button"]
                     )
                 
+                await HumanBehavior.simulate_thinking()
                 await post_button.click()
 
                 # Wait for post confirmation
-                await asyncio.sleep(3)
+                await HumanBehavior.anti_detection_delay()
 
                 logger.info("✅ Quote tweet posted successfully")
+                
+                # 🛡️ CRITICAL: Record operation for rate limiting
+                self.rate_limiter.record_operation(OperationType.QUOTE)
+                
                 return {
                     "success": True,
                     "quote_tweet_url": page.url,  # URL after posting

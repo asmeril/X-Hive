@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Any
 from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 
 from config import settings
+from human_behavior import HumanBehavior
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +61,18 @@ class ChromePool:
         self.cookie_path = Path(settings.COOKIE_PATH)
         self.user_data_dir = Path(settings.BROWSER_DATA_DIR)
         self.headless = settings.CHROME_HEADLESS
+        
+        # STEALTH MODE: Anti-detection arguments
         self.launch_args = [
             "--disable-blink-features=AutomationControlled",
             "--disable-dev-shm-usage",
+            "--disable-web-security",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-infobars",
+            "--window-size=1920,1080",
         ]
 
         logger.info("ChromePool initialized")
@@ -95,18 +105,67 @@ class ChromePool:
                         args=self.launch_args,
                     )
 
-                    # Create persistent context
+                    # STEALTH MODE: Random User-Agent and viewport
+                    user_agent = HumanBehavior.get_random_user_agent()
+                    viewport = HumanBehavior.get_random_viewport()
+
+                    # Create persistent context with anti-detection
                     self.context = await self.browser.new_context(
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        user_agent=user_agent,
+                        viewport=viewport,
+                        locale="en-US",
+                        timezone_id="America/New_York",
+                        # Permissions
+                        permissions=["geolocation"],
+                        # Anti-fingerprinting
+                        extra_http_headers={
+                            "Accept-Language": "en-US,en;q=0.9",
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                        }
                     )
+                    
+                    # STEALTH MODE: Inject anti-detection scripts
+                    await self.context.add_init_script("""
+                        // Remove webdriver property
+                        Object.defineProperty(navigator, 'webdriver', {
+                            get: () => undefined
+                        });
+                        
+                        // Override permissions
+                        const originalQuery = window.navigator.permissions.query;
+                        window.navigator.permissions.query = (parameters) => (
+                            parameters.name === 'notifications' ?
+                                Promise.resolve({ state: Notification.permission }) :
+                                originalQuery(parameters)
+                        );
+                        
+                        // Override plugins
+                        Object.defineProperty(navigator, 'plugins', {
+                            get: () => [1, 2, 3, 4, 5]
+                        });
+                        
+                        // Override languages
+                        Object.defineProperty(navigator, 'languages', {
+                            get: () => ['en-US', 'en']
+                        });
+                        
+                        // Chrome runtime
+                        window.chrome = {
+                            runtime: {}
+                        };
+                        
+                        // Mock screen properties with randomization
+                        Object.defineProperty(screen, 'availTop', { get: () => 0 });
+                        Object.defineProperty(screen, 'availLeft', { get: () => 0 });
+                    """)
 
                     # Load saved cookies
                     await self.load_cookies()
 
                     # Create page
                     self.page = await self.context.new_page()
-
-                    logger.info("✅ Chrome pool initialized successfully")
+                    
+                    logger.info(f"✅ Chrome pool initialized (stealth mode, UA: {user_agent[:50]}..., viewport: {viewport})")
                     self._retry_count = 0
                     return
 

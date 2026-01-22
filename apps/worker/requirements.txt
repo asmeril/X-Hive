@@ -6,3 +6,6 @@ playwright
 python-telegram-bot
 httpx
 aiosqlite
+
+# Anti-detection stealth
+playwright-stealth==1.0.6

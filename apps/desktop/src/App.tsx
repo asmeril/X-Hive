@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
+import XDaemonMonitor from "./components/XDaemonMonitor";
+import XOperations from "./components/XOperations";
 
 type HealthResponse = {
   status: string;
@@ -16,7 +18,7 @@ function App() {
   const [data, setData] = useState<HealthResponse | ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"health" | "lock">("health");
+  const [activeTab, setActiveTab] = useState<"monitor" | "operations" | "health" | "lock">("monitor");
 
   const checkHealth = async () => {
     setLoading(true);
@@ -51,18 +53,22 @@ function App() {
   };
 
   return (
-    <main
-      style={{
-        display: "flex",
-        minHeight: "100vh",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: "#0f172a",
-        color: "#e5e7eb",
-        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
-        padding: "24px",
-      }}
-    >
+    <main style={{ backgroundColor: "#f3f4f6", minHeight: "100vh" }}>
+      {activeTab === "monitor" ? (
+        <XDaemonMonitor />
+      ) : (
+        <div
+          style={{
+            display: "flex",
+            minHeight: "100vh",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "#0f172a",
+            color: "#e5e7eb",
+            fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+            padding: "24px",
+          }}
+        >
       <div
         style={{
           width: "100%",
@@ -79,6 +85,40 @@ function App() {
         </h1>
 
         <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+          <button
+            onClick={() => setActiveTab("monitor")}
+            style={{
+              flex: 1,
+              padding: "10px 12px",
+              borderRadius: "6px",
+              border: "none",
+              backgroundColor: activeTab === "monitor" ? "#3b82f6" : "#374151",
+              color: "white",
+              fontSize: "14px",
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "background-color 0.2s ease",
+            }}
+          >
+            Monitor
+          </button>
+          <button
+            onClick={() => setActiveTab("operations")}
+            style={{
+              flex: 1,
+              padding: "10px 12px",
+              borderRadius: "6px",
+              border: "none",
+              backgroundColor: activeTab === "operations" ? "#3b82f6" : "#374151",
+              color: "white",
+              fontSize: "14px",
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "background-color 0.2s ease",
+            }}
+          >
+            Operations
+          </button>
           <button
             onClick={() => setActiveTab("health")}
             style={{
@@ -114,6 +154,8 @@ function App() {
             Lock Manager
           </button>
         </div>
+
+        {activeTab === "operations" && <XOperations />}
 
         {activeTab === "health" && (
           <button
@@ -236,7 +278,7 @@ function App() {
             Click "Check Worker Health" to query the local worker.
           </p>
         )}
-      </div>
+      )}
     </main>
   );
 }
