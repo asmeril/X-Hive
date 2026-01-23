@@ -3,7 +3,15 @@ Chrome Pool Manager for X-HIVE
 Persistent Playwright browser management with cookie persistence and session warmth.
 """
 
+import sys
 import asyncio
+
+# Windows fix for Playwright subprocess on Python 3.12+ (must be before async_playwright import)
+# Python 3.12+ changed asyncio subprocess handling, requiring WindowsSelectorEventLoopPolicy
+if sys.platform == "win32" and sys.version_info >= (3, 12):
+    # Use WindowsSelectorEventLoopPolicy for subprocess support
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import json
 import logging
 from pathlib import Path
@@ -227,7 +235,7 @@ class ChromePool:
             logger.error(f"Failed to save cookies: {e}")
 
     async def load_cookies(self) -> None:
-        """
+        r"""
         Load cookies from JSON file and add to context.
         
         Cookie path: C:\XHive\data\x_cookies.json
