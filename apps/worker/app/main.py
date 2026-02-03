@@ -3,6 +3,13 @@ X-HIVE Worker - Main FastAPI Application
 Enhanced with comprehensive safety systems.
 """
 
+import asyncio
+import sys
+
+# Python 3.14 Windows asyncio fix (MUST be before FastAPI imports)
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException

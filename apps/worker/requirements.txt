@@ -3,9 +3,12 @@ uvicorn[standard]
 pydantic
 pydantic-settings
 playwright
-python-telegram-bot
+python-telegram-bot==20.7
+python-dotenv==1.0.0
 httpx
 aiosqlite
+apscheduler
+google-generativeai
 
 # Anti-detection stealth
 playwright-stealth==1.0.6
