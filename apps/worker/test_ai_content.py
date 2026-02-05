@@ -18,8 +18,8 @@ try:
     from ai_content_generator import AIContentGenerator
     MOCK_MODE = False
     print("[OK] AIContentGenerator imported successfully")
-except ImportError as e:
-    print(f"[WARNING] google-generativeai not available: {e}")
+except (ImportError, ValueError) as e:
+    print(f"[WARNING] google-genai not available: {e}")
     print("Running in MOCK MODE for testing...\n")
     MOCK_MODE = True
     
@@ -227,7 +227,7 @@ async def main():
             print("=" * 80)
             print("\n[OK] AI Content Generator structure is validated!")
             if MOCK_MODE:
-                print("[INFO] Running in MOCK MODE - Install google-generativeai for live API testing")
+                print("[INFO] Running in MOCK MODE - Install google-genai for live API testing")
             else:
                 print("[OK] Gemini API integration validated!")
             print("[OK] Ready for production use!")

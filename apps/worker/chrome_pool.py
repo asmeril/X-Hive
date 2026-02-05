@@ -7,10 +7,12 @@ import sys
 import asyncio
 
 # Windows fix for Playwright subprocess on Python 3.12+ (must be before async_playwright import)
-# Python 3.12+ changed asyncio subprocess handling, requiring WindowsSelectorEventLoopPolicy
+# Python 3.12+ changed asyncio subprocess handling, try ProactorEventLoopPolicy first
 if sys.platform == "win32" and sys.version_info >= (3, 12):
-    # Use WindowsSelectorEventLoopPolicy for subprocess support
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import json
 import logging
