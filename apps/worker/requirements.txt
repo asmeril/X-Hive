@@ -12,3 +12,11 @@ google-generativeai
 
 # Anti-detection stealth
 playwright-stealth==1.0.6
+
+# Content Sources
+beautifulsoup4
+python-dateutil
+arxiv
+pytrends
+aiohttp
+tweepy

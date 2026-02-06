@@ -13,17 +13,28 @@ from enum import Enum
 
 
 class ContentCategory(str, Enum):
-    """Content categories"""
-    AI_ML = "ai_ml"
-    TECH_NEWS = "tech_news"
-    STARTUP = "startup"
-    PRODUCTIVITY = "productivity"
-    PROGRAMMING = "programming"
-    BLOCKCHAIN = "blockchain"
-    CYBERSECURITY = "cybersecurity"
-    DESIGN = "design"
-    BUSINESS = "business"
-    OTHER = "other"
+    """Content categories for classification"""
+    AI_ML = "ai_ml"                              # 30% target
+    TECH_PROGRAMMING = "tech_programming"        # 20% target
+    STARTUP_BUSINESS = "startup_business"        # 15% target
+    GAMING_ENTERTAINMENT = "gaming_entertainment" # 10% target
+    CRYPTO_WEB3 = "crypto_web3"                  # 10% target
+    MOBILE_APPS = "mobile_apps"                  # 5% target
+    SECURITY_PRIVACY = "security_privacy"        # 5% target
+    SCIENCE = "science"                          # 5% target
+
+
+# Category distribution targets for balanced content
+CATEGORY_TARGETS = {
+    ContentCategory.AI_ML: 0.30,
+    ContentCategory.TECH_PROGRAMMING: 0.20,
+    ContentCategory.STARTUP_BUSINESS: 0.15,
+    ContentCategory.GAMING_ENTERTAINMENT: 0.10,
+    ContentCategory.CRYPTO_WEB3: 0.10,
+    ContentCategory.MOBILE_APPS: 0.05,
+    ContentCategory.SECURITY_PRIVACY: 0.05,
+    ContentCategory.SCIENCE: 0.05,
+}
 
 
 class ContentQuality(str, Enum):
@@ -54,7 +65,7 @@ class ContentItem:
     published_at: Optional[datetime] = None
     
     # Metadata
-    category: ContentCategory = ContentCategory.OTHER
+    category: ContentCategory = ContentCategory.AI_ML
     quality: Optional[ContentQuality] = None
     tags: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)  # Extra source-specific data
@@ -192,6 +203,90 @@ class BaseContentSource(ABC):
             'fetch_count': self.fetch_count,
             'error_count': self.error_count,
         }
+    
+    def categorize_by_keywords(
+        self, 
+        text: str, 
+        default: ContentCategory = None
+    ) -> ContentCategory:
+        """
+        Auto-categorize content based on keywords.
+        
+        Args:
+            text: Text to analyze (title + description)
+            default: Default category if no match
+            
+        Returns:
+            ContentCategory
+        """
+        text_lower = text.lower()
+        
+        # AI/ML keywords
+        ai_keywords = [
+            'ai', 'artificial intelligence', 'machine learning', 'ml',
+            'deep learning', 'neural', 'llm', 'gpt', 'chatgpt',
+            'gemini', 'claude', 'transformer', 'diffusion', 'model',
+            'nlp', 'computer vision', 'image generation'
+        ]
+        if any(kw in text_lower for kw in ai_keywords):
+            return ContentCategory.AI_ML
+        
+        # Crypto/Web3 keywords
+        crypto_keywords = [
+            'crypto', 'bitcoin', 'ethereum', 'blockchain',
+            'web3', 'nft', 'defi', 'solana', 'dao', 'token',
+            'cryptocurrency', 'smart contract'
+        ]
+        if any(kw in text_lower for kw in crypto_keywords):
+            return ContentCategory.CRYPTO_WEB3
+        
+        # Gaming keywords
+        gaming_keywords = [
+            'game', 'gaming', 'gamedev', 'unity', 'unreal',
+            'ps5', 'xbox', 'nintendo', 'steam', 'esports',
+            'indie game', 'game engine'
+        ]
+        if any(kw in text_lower for kw in gaming_keywords):
+            return ContentCategory.GAMING_ENTERTAINMENT
+        
+        # Security keywords
+        security_keywords = [
+            'security', 'vulnerability', 'hack', 'breach',
+            'cyber', 'infosec', 'netsec', 'exploit', 'cve',
+            'penetration', 'encryption', 'privacy'
+        ]
+        if any(kw in text_lower for kw in security_keywords):
+            return ContentCategory.SECURITY_PRIVACY
+        
+        # Startup/Business keywords
+        startup_keywords = [
+            'startup', 'funding', 'vc', 'venture capital',
+            'investment', 'yc', 'entrepreneur', 'saas', 'launch',
+            'series a', 'seed round', 'pitch'
+        ]
+        if any(kw in text_lower for kw in startup_keywords):
+            return ContentCategory.STARTUP_BUSINESS
+        
+        # Mobile/Apps keywords
+        mobile_keywords = [
+            'app', 'mobile', 'ios', 'android', 'iphone',
+            'flutter', 'react native', 'swift', 'kotlin',
+            'app store', 'google play'
+        ]
+        if any(kw in text_lower for kw in mobile_keywords):
+            return ContentCategory.MOBILE_APPS
+        
+        # Science keywords
+        science_keywords = [
+            'science', 'research', 'study', 'physics',
+            'chemistry', 'biology', 'astronomy', 'arxiv', 'paper',
+            'scientific', 'discovery', 'experiment'
+        ]
+        if any(kw in text_lower for kw in science_keywords):
+            return ContentCategory.SCIENCE
+        
+        # Default to tech/programming
+        return default or ContentCategory.TECH_PROGRAMMING
 
 
 class ContentSourceError(Exception):
@@ -294,3 +389,93 @@ def sort_by_relevance(items: List[ContentItem], reverse: bool = True) -> List[Co
         Sorted list of ContentItem objects
     """
     return sorted(items, key=lambda x: x.relevance_score, reverse=reverse)
+
+
+def filter_by_category(items: List[ContentItem], categories: List[ContentCategory]) -> List[ContentItem]:
+    """
+    Filter content items by category.
+    
+    Args:
+        items: List of ContentItem objects
+        categories: List of ContentCategory to include
+        
+    Returns:
+        Filtered list of ContentItem objects
+    """
+    if not categories:
+        return items
+    
+    return [item for item in items if item.category in categories]
+
+
+def group_by_category(items: List[ContentItem]) -> Dict[ContentCategory, List[ContentItem]]:
+    """
+    Group content items by category.
+    
+    Args:
+        items: List of ContentItem objects
+        
+    Returns:
+        Dictionary mapping ContentCategory to list of items
+    """
+    grouped: Dict[ContentCategory, List[ContentItem]] = {
+        category: [] for category in ContentCategory
+    }
+    
+    for item in items:
+        grouped[item.category].append(item)
+    
+    return grouped
+
+
+def get_category_distribution(items: List[ContentItem]) -> Dict[ContentCategory, float]:
+    """
+    Calculate the distribution of content across categories.
+    
+    Args:
+        items: List of ContentItem objects
+        
+    Returns:
+        Dictionary mapping ContentCategory to percentage (0.0-1.0)
+    """
+    if not items:
+        return {category: 0.0 for category in ContentCategory}
+    
+    grouped = group_by_category(items)
+    total = len(items)
+    
+    return {
+        category: len(items_list) / total
+        for category, items_list in grouped.items()
+    }
+
+
+def get_category_balance_score(items: List[ContentItem]) -> float:
+    """
+    Calculate how well content distribution matches target distribution.
+    
+    A score of 1.0 means perfect match with target distribution.
+    A score of 0.0 means completely mismatched.
+    
+    Args:
+        items: List of ContentItem objects
+        
+    Returns:
+        Balance score (0.0-1.0)
+    """
+    if not items:
+        return 0.0
+    
+    current_dist = get_category_distribution(items)
+    
+    # Calculate total difference from target
+    total_diff = 0.0
+    for category, target in CATEGORY_TARGETS.items():
+        current = current_dist.get(category, 0.0)
+        total_diff += abs(current - target)
+    
+    # Score is inversely proportional to total difference
+    # Max difference is 2.0 (when completely opposite)
+    balance_score = max(0.0, 1.0 - (total_diff / 2.0))
+    
+    return balance_score

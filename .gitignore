@@ -13,6 +13,9 @@ venv/
 
 # Environment
 .env
+apps/worker/.env
+apps/worker/approval/.env
+**/.env
 
 # Logs & Data
 *.log
