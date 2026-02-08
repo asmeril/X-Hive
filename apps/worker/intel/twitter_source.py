@@ -10,7 +10,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 import logging
 from typing import List, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import re
 from urllib.parse import quote_plus
@@ -22,6 +22,7 @@ from .base_source import (
     ContentSourceError
 )
 from .cookie_manager import get_cookie_manager
+from .cookie_loader import get_cookie_loader
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +102,9 @@ class TwitterSource(BaseContentSource):
         """
         super().__init__()
         
-        # Get cookie manager
+        # Get cookie manager and loader
         self.cookie_manager = get_cookie_manager()
+        self.cookie_loader = get_cookie_loader()
         
         self.influencers = influencers or self.SEED_INFLUENCERS
         self.use_cookies = use_cookies
@@ -199,9 +201,21 @@ class TwitterSource(BaseContentSource):
             List of ContentItem objects
         """
         
-        # Use Nitter directly (cookie-based scraping has header size issues)
-        # Will improve in Phase 2 with optimized cookies
-        return await self._fetch_user_tweets_nitter(username, category)
+        # Try cookie-based scraping first
+        if self.use_cookies:
+            try:
+                items = await self._fetch_user_tweets_with_cookies(username, category)
+                if items:
+                    logger.debug(f"✅ Cookie auth: fetched {len(items)} tweets from @{username}")
+                    return items
+            except Exception as e:
+                logger.debug(f"Cookie auth failed for @{username}: {e}")
+        
+        # Fallback to Nitter
+        if self.fallback_to_nitter:
+            return await self._fetch_user_tweets_nitter(username, category)
+        
+        return []
     
     async def _fetch_user_tweets_with_cookies(
         self,
@@ -214,56 +228,66 @@ class TwitterSource(BaseContentSource):
         This method scrapes twitter.com using authenticated session.
         """
         
-        # Twitter.com requires GraphQL API scraping with cookies
-        # This is complex - using simplified approach
-        
-        url = f"{self.BASE_URL}/{username}"
-        # Use JSON cookies if available, fall back to .env
-        headers = self.cookie_manager.get_headers_for_site('twitter')
-        
         items = []
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                
-                if response.status == 403:
-                    raise ContentSourceError("Twitter returned 403 - cookie may be invalid")
-                
-                if response.status != 200:
-                    raise ContentSourceError(f"HTTP {response.status} from Twitter")
-                
-                html = await response.text()
-                
-                # Extract tweets from HTML
-                # Twitter uses complex React app, tweets are in script tags as JSON
-                
-                # Look for initial state data
-                tweet_data_match = re.search(
-                    r'<script[^>]*>window\.__INITIAL_STATE__\s*=\s*({.*?})</script>',
-                    html,
-                    re.DOTALL
-                )
-                
-                if not tweet_data_match:
-                    logger.warning(f"Could not find tweet data for @{username}")
-                    return items
-                
-                try:
-                    initial_state = json.loads(tweet_data_match.group(1))
+        # Try to get cookies from JSON first
+        try:
+            cookie_header = self.cookie_loader.get_cookie_header('twitter')
+            
+            if not cookie_header:
+                raise ContentSourceError("No Twitter cookies available")
+            
+            url = f"{self.BASE_URL}/{username}"
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Cookie': cookie_header,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Referer': 'https://twitter.com/',
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     
-                    # Extract tweets from initial state
-                    # (Twitter's data structure is complex and changes frequently)
-                    # This is a simplified example
+                    if response.status == 403:
+                        raise ContentSourceError("Twitter returned 403 - cookies may be invalid")
                     
-                    tweets_data = self._extract_tweets_from_initial_state(initial_state)
+                    if response.status != 200:
+                        raise ContentSourceError(f"HTTP {response.status} from Twitter")
                     
-                    for tweet_data in tweets_data[:self.tweets_per_influencer]:
-                        item = self._create_content_item_from_tweet(tweet_data, category)
-                        if item:
-                            items.append(item)
-                
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse Twitter initial state: {e}")
+                    html = await response.text()
+                    
+                    # Extract tweets from HTML
+                    # Twitter uses complex React app, tweets are in script tags as JSON
+                    
+                    # Look for initial state data
+                    tweet_data_match = re.search(
+                        r'<script[^>]*>window\.__INITIAL_STATE__\s*=\s*({.*?})</script>',
+                        html,
+                        re.DOTALL
+                    )
+                    
+                    if not tweet_data_match:
+                        logger.debug(f"Could not find tweet data for @{username}")
+                        return items
+                    
+                    try:
+                        initial_state = json.loads(tweet_data_match.group(1))
+                        
+                        # Extract tweets from initial state
+                        tweets_data = self._extract_tweets_from_initial_state(initial_state)
+                        
+                        for tweet_data in tweets_data[:self.tweets_per_influencer]:
+                            item = self._create_content_item_from_tweet(tweet_data, category)
+                            if item:
+                                items.append(item)
+                    
+                    except json.JSONDecodeError as e:
+                        logger.debug(f"Failed to parse Twitter initial state: {e}")
+        
+        except Exception as e:
+            logger.debug(f"Cookie-based Twitter scraping failed: {e}")
         
         return items
     
@@ -280,8 +304,9 @@ class TwitterSource(BaseContentSource):
         
         items = []
         
-        # Try multiple Nitter instances
-        for nitter_url in self.NITTER_INSTANCES:
+        # Try multiple Nitter instances (limit attempts)
+        max_instances = 2  # Only try first 2 instances
+        for nitter_url in self.NITTER_INSTANCES[:max_instances]:
             try:
                 url = f"{nitter_url}/{username}"
                 
@@ -293,7 +318,11 @@ class TwitterSource(BaseContentSource):
                 }
                 
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    async with session.get(
+                        url, 
+                        headers=headers, 
+                        timeout=aiohttp.ClientTimeout(total=5)  # Reduced to 5s
+                    ) as response:
                         
                         if response.status != 200:
                             continue
@@ -345,7 +374,7 @@ class TwitterSource(BaseContentSource):
                                     url=tweet_url,
                                     source_type='twitter',
                                     source_name=f"Twitter - @{username}",
-                                    published_at=datetime.now(),  # Nitter doesn't always show exact time
+                                    published_at=datetime.now(timezone.utc),  # Nitter doesn't always show exact time
                                     category=category,
                                     description=text,
                                     author=username
@@ -497,7 +526,7 @@ class TwitterSource(BaseContentSource):
                                     url=tweet_url,
                                     source_type='twitter',
                                     source_name=f"Twitter - Trending: {query}",
-                                    published_at=datetime.now(),
+                                    published_at=datetime.now(timezone.utc),
                                     category=category,
                                     description=text,
                                     author=""
@@ -567,7 +596,7 @@ class TwitterSource(BaseContentSource):
                 url=f"{self.BASE_URL}/{username}/status/{tweet_id}",
                 source_type='twitter',
                 source_name=f"Twitter - @{username}",
-                published_at=datetime.now(),
+                published_at=datetime.now(timezone.utc),
                 category=category,
                 description=text,
                 author=username

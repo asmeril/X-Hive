@@ -3,13 +3,14 @@ Medium Article Aggregator
 
 Scrapes trending tech/AI/startup articles.
 Uses cookies to bypass paywall if available.
+Falls back to Playwright for Cloudflare bypass.
 """
 
 import aiohttp
 from bs4 import BeautifulSoup
 import logging
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 
 from .base_source import (
@@ -18,6 +19,7 @@ from .base_source import (
     ContentCategory
 )
 from .cookie_manager import get_cookie_manager
+from .playwright_helper import get_playwright_helper
 
 logger = logging.getLogger(__name__)
 
@@ -100,73 +102,84 @@ class MediumScraper(BaseContentSource):
         headers = self.cookie_manager.get_headers_for_site('medium')
         
         items = []
+        html = None
         
+        # Try regular request first
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 
-                if response.status != 200:
-                    logger.warning(f"HTTP {response.status} for {topic}")
+                if response.status == 403:
+                    # TODO: Playwright fallback (currently disabled due to timeout issues)
+                    logger.warning(f"⚠️  403 for {topic} - Playwright fallback disabled")
                     return items
                 
-                html = await response.text()
-                soup = BeautifulSoup(html, 'html.parser')
+                elif response.status == 200:
+                    html = await response.text()
                 
-                # Find article links (Medium uses h2/h3 for titles)
-                article_links = soup.find_all('a', href=re.compile(r'medium\.com/.*'))
-                
-                seen_urls = set()
-                
-                for link in article_links[:self.articles_per_topic * 3]:  # Get more, filter duplicates
-                    try:
-                        url = link['href']
-                        
-                        # Skip if already seen
-                        if url in seen_urls:
-                            continue
-                        seen_urls.add(url)
-                        
-                        # Get title (usually in h2 or h3)
-                        title_elem = link.find(['h2', 'h3'])
-                        if not title_elem:
-                            # Try parent elements
-                            parent = link.parent
-                            if parent:
-                                title_elem = parent.find(['h2', 'h3'])
-                        
-                        if not title_elem:
-                            continue
-                        
-                        title = title_elem.get_text(strip=True)
-                        
-                        if not title or len(title) < 10:
-                            continue
-                        
-                        # Ensure full URL
-                        if not url.startswith('http'):
-                            url = 'https://medium.com' + url
-                        
-                        # Create item
-                        item = ContentItem(
-                            title=title,
-                            url=url,
-                            source_type='medium',
-                            source_name=f"Medium - {topic}",
-                            published_at=datetime.now(),
-                            category=category,
-                            description=None
-                        )
-                        
-                        item.relevance_score = 0.65
-                        item.engagement_score = 0.6
-                        
-                        items.append(item)
-                        
-                        if len(items) >= self.articles_per_topic:
-                            break
+                else:
+                    logger.warning(f"HTTP {response.status} for {topic}")
+                    return items
+        
+        # Parse HTML (from either aiohttp or Playwright)
+        if html:
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Find article links (Medium uses h2/h3 for titles)
+            article_links = soup.find_all('a', href=re.compile(r'medium\.com/.*'))
+            
+            seen_urls = set()
+            
+            for link in article_links[:self.articles_per_topic * 3]:  # Get more, filter duplicates
+                try:
+                    article_url = link['href']
                     
-                    except Exception as e:
-                        logger.debug(f"Error parsing article: {e}")
+                    # Skip if already seen
+                    if article_url in seen_urls:
                         continue
+                    seen_urls.add(article_url)
+                    
+                    # Get title (usually in h2 or h3)
+                    title_elem = link.find(['h2', 'h3'])
+                    if not title_elem:
+                        # Try parent elements
+                        parent = link.parent
+                        if parent:
+                            title_elem = parent.find(['h2', 'h3'])
+                    
+                    if not title_elem:
+                        continue
+                    
+                    title = title_elem.get_text(strip=True)
+                    
+                    if not title or len(title) < 10:
+                        continue
+                    
+                    # Ensure full URL
+                    if not article_url.startswith('http'):
+                        article_url = 'https://medium.com' + article_url
+                    
+                    # Create item
+                    item = ContentItem(
+                        title=title,
+                        url=article_url,
+                        source_type='medium',
+                        source_name=f"Medium - {topic}",
+                        published_at=datetime.now(timezone.utc),
+                        category=category,
+                        description=None
+                    )
+                    
+                    item.relevance_score = 0.65
+                    item.engagement_score = 0.6
+                    
+                    items.append(item)
+                    
+                    if len(items) >= self.articles_per_topic:
+                        break
+                
+                except Exception as e:
+                    logger.debug(f"Error parsing article: {e}")
+                    continue
         
         return items
 

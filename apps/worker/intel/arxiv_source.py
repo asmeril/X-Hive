@@ -72,15 +72,27 @@ class ArxivSource(BaseContentSource):
                 )
                 
                 for paper in search.results():
-                # Filter by date
-                if paper.published < datetime.now(timezone.utc) - timedelta(days=self.days_back):
-                    continue                    # Create ContentItem
+                    # paper.published is already a datetime object
+                    published_at = paper.published
+                    
+                    # Ensure timezone-aware
+                    if published_at.tzinfo is None:
+                        published_at = published_at.replace(tzinfo=timezone.utc)
+                    
+                    # Use timezone-aware datetime for comparison
+                    cutoff_date = datetime.now(timezone.utc) - timedelta(days=self.days_back)
+                    
+                    # Filter by date
+                    if published_at < cutoff_date:
+                        continue
+                    
+                    # Create ContentItem
                     item = ContentItem(
                         title=paper.title,
                         url=paper.entry_id,
                         source_type='arxiv',
                         source_name=f"ArXiv - {category}",
-                        published_at=paper.published,
+                        published_at=published_at,  # Use parsed, timezone-aware datetime
                         author=', '.join([a.name for a in paper.authors[:3]]),
                         description=paper.summary[:500]
                     )

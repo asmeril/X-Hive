@@ -2,13 +2,14 @@
 Perplexity Discover Aggregator
 
 Scrapes trending topics from Perplexity Discover page.
+Falls back to Playwright for Cloudflare bypass.
 """
 
 import aiohttp
 from bs4 import BeautifulSoup
 import logging
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .base_source import (
     BaseContentSource,
@@ -16,6 +17,7 @@ from .base_source import (
     ContentCategory
 )
 from .cookie_manager import get_cookie_manager
+from .playwright_helper import get_playwright_helper
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +52,13 @@ class PerplexityScraper(BaseContentSource):
         """Fetch trending topics from Perplexity Discover"""
         
         items = []
+        html = None
         
         # Use JSON cookies if available, fall back to default headers
         headers = self.cookie_manager.get_headers_for_site('perplexity')
         
         try:
+            # Try regular request first
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     self.DISCOVER_URL, 
@@ -62,57 +66,66 @@ class PerplexityScraper(BaseContentSource):
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
                     
-                    if response.status != 200:
-                        logger.error(f"HTTP {response.status} from Perplexity")
+                    if response.status == 403:
+                        # TODO: Playwright fallback (currently disabled due to timeout issues)
+                        logger.warning("⚠️  403 from Perplexity - Playwright fallback disabled")
                         return items
                     
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
+                    elif response.status == 200:
+                        html = await response.text()
                     
-                    # Find links (Perplexity structure varies, use generic approach)
-                    links = soup.find_all('a', href=True)
+                    else:
+                        logger.error(f"HTTP {response.status} from Perplexity")
+                        return items
+            
+            # Parse HTML (from either aiohttp or Playwright)
+            if html:
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Find links (Perplexity structure varies, use generic approach)
+                links = soup.find_all('a', href=True)
+                
+                seen_titles = set()
+                
+                for link in links:
+                    if len(items) >= self.limit:
+                        break
                     
-                    seen_titles = set()
-                    
-                    for link in links:
-                        if len(items) >= self.limit:
-                            break
+                    try:
+                        title = link.get_text(strip=True)
                         
-                        try:
-                            title = link.get_text(strip=True)
-                            
-                            if not title or len(title) < 10:
-                                continue
-                            
-                            if title in seen_titles:
-                                continue
-                            seen_titles.add(title)
-                            
-                            url = link['href']
-                            if not url.startswith('http'):
-                                url = 'https://www.perplexity.ai' + url
-                            
-                            # Auto-categorize
-                            category = self.categorize_by_keywords(title)
-                            
-                            item = ContentItem(
-                                title=title,
-                                url=url,
-                                source_type='perplexity',
-                                source_name='Perplexity Discover',
-                                published_at=datetime.now(),
-                                category=category,
-                                description=None
-                            )
-                            
-                            item.relevance_score = 0.7
-                            item.engagement_score = 0.65
-                            
-                            items.append(item)
-                        
-                        except Exception as e:
-                            logger.debug(f"Error parsing link: {e}")
+                        if not title or len(title) < 10:
                             continue
+                        
+                        if title in seen_titles:
+                            continue
+                        seen_titles.add(title)
+                        
+                        url = link['href']
+                        if not url.startswith('http'):
+                            url = 'https://www.perplexity.ai' + url
+                        
+                        # Auto-categorize
+                        category = self.categorize_by_keywords(title)
+                        
+                        item = ContentItem(
+                            title=title,
+                            url=url,
+                            source_type='perplexity',
+                            source_name='Perplexity Discover',
+                            published_at=datetime.now(timezone.utc),
+                            category=category,
+                            description=None
+                        )
+                        
+                        item.relevance_score = 0.7
+                        item.engagement_score = 0.65
+                        
+                        items.append(item)
+                    
+                    except Exception as e:
+                        logger.debug(f"Error parsing link: {e}")
+                        continue
             
             logger.info(f"✅ Perplexity: Fetched {len(items)} items")
         

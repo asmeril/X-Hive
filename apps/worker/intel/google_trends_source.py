@@ -5,9 +5,10 @@ Fetches trending searches from Google Trends.
 """
 
 from pytrends.request import TrendReq
+import asyncio
 import logging
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from .base_source import (
     BaseContentSource,
     ContentItem,
@@ -34,73 +35,113 @@ class GoogleTrendsSource(BaseContentSource):
     ):
         super().__init__()
         self.cookie_manager = get_cookie_manager()
-        self.pytrends = TrendReq(hl='en-US', tz=360)
         self.geo = geo
         self.limit = limit
         
-        logger.info(f"✅ GoogleTrendsSource initialized (geo={geo}, limit={limit})")
+        # Initialize pytrends with proper configuration
+        try:
+            self.pytrends = TrendReq(
+                hl='en-US',
+                tz=360,
+                timeout=(10, 25),
+                requests_args={'verify': True}  # Use requests_args instead of retries/backoff_factor
+            )
+            logger.info(f"✅ GoogleTrendsSource initialized (geo={geo}, limit={limit})")
+        except Exception as e:
+            logger.error(f"❌ Error initializing pytrends: {e}")
+            self.pytrends = None
     
     def get_source_name(self) -> str:
         """Get source name"""
         return "Google Trends"
     
     async def fetch_latest(self) -> List[ContentItem]:
-        """Fetch trending searches"""
+        """Fetch trending searches from Google Trends"""
+        
+        if not self.pytrends:
+            logger.error("❌ Google Trends: pytrends not initialized")
+            return []
         
         items = []
         
         try:
-            # Get trending searches
-            trending = self.pytrends.trending_searches(pn=self.geo.lower())
+            # Fetch trending searches (synchronous call, run in executor)
+            loop = asyncio.get_event_loop()
             
-            for idx, keyword in enumerate(trending[0][:self.limit]):
-                # Create ContentItem
+            try:
+                trending_searches = await loop.run_in_executor(
+                    None,
+                    lambda: self.pytrends.trending_searches(pn=self.geo.lower())
+                )
+            except Exception as e:
+                # Fallback to US if specific geo fails
+                if self.geo != 'US':
+                    logger.warning(f"⚠️  Failed for {self.geo}, trying US: {e}")
+                    trending_searches = await loop.run_in_executor(
+                        None,
+                        lambda: self.pytrends.trending_searches(pn='united_states')
+                    )
+                else:
+                    raise
+            
+            if trending_searches is None or trending_searches.empty:
+                logger.warning("⚠️  No trending searches found")
+                return items
+            
+            # Process trends
+            for idx, trend in enumerate(trending_searches[0].head(self.limit)):
+                if not trend or len(str(trend)) < 2:
+                    continue
+                
+                # Create search URL
+                search_url = f"https://www.google.com/search?q={str(trend).replace(' ', '+')}"
+                
+                # Auto-categorize
+                category = self._categorize_trend(str(trend))
+                
                 item = ContentItem(
-                    title=f"Trending: {keyword}",
-                    url=f"https://trends.google.com/trends/explore?q={keyword}&geo={self.geo}",
+                    title=str(trend),
+                    url=search_url,
                     source_type='google_trends',
-                    source_name=f"Google Trends ({self.geo})",
-                    published_at=datetime.now(),
-                    description=f"Trending search query: {keyword}"
+                    source_name='Google Trends',
+                    published_at=datetime.now(timezone.utc),
+                    category=category,
+                    description=f"Trending search: {trend}"
                 )
                 
-                # Categorize based on keyword
-                item.category = self._categorize_trend(keyword)
-                
-                # Scores (trends are relevant by definition)
-                item.relevance_score = max(0.5, 1.0 - (idx * 0.02))  # Decay by position
-                item.engagement_score = 0.7
+                item.relevance_score = 0.8 - (idx * 0.02)  # Decay by rank
+                item.engagement_score = 0.75
                 
                 items.append(item)
             
-            logger.info(f"✅ Fetched {len(items)} trends from Google Trends")
+            logger.info(f"✅ Google Trends: Fetched {len(items)} trends")
         
         except Exception as e:
             logger.error(f"❌ Error fetching Google Trends: {e}")
         
         return items
     
-    def _categorize_trend(self, keyword: str) -> ContentCategory:
-        """Categorize trend based on keyword"""
-        kw_lower = keyword.lower()
+    def _categorize_trend(self, trend: str) -> ContentCategory:
+        """Auto-categorize trend"""
         
-        if any(term in kw_lower for term in ['ai', 'chatgpt', 'gemini', 'llm']):
+        trend_lower = trend.lower()
+        
+        if any(kw in trend_lower for kw in ['ai', 'chatgpt', 'openai', 'ml', 'robot', 'gemini', 'llm']):
             return ContentCategory.AI_ML
-        
-        if any(term in kw_lower for term in ['crypto', 'bitcoin', 'ethereum']):
+        elif any(kw in trend_lower for kw in ['crypto', 'bitcoin', 'ethereum', 'nft']):
             return ContentCategory.CRYPTO_WEB3
-        
-        if any(term in kw_lower for term in ['game', 'gaming', 'ps5', 'xbox']):
+        elif any(kw in trend_lower for kw in ['game', 'gaming', 'esports', 'twitch', 'ps5', 'xbox']):
             return ContentCategory.GAMING_ENTERTAINMENT
-        
-        if any(term in kw_lower for term in ['app', 'iphone', 'android']):
+        elif any(kw in trend_lower for kw in ['iphone', 'android', 'app', 'mobile']):
             return ContentCategory.MOBILE_APPS
-        
-        if any(term in kw_lower for term in ['hack', 'breach', 'security']):
+        elif any(kw in trend_lower for kw in ['hack', 'breach', 'security', 'privacy']):
             return ContentCategory.SECURITY_PRIVACY
-        
-        # Default
-        return ContentCategory.TECH_PROGRAMMING
+        elif any(kw in trend_lower for kw in ['startup', 'ipo', 'funding', 'vc']):
+            return ContentCategory.STARTUP_BUSINESS
+        elif any(kw in trend_lower for kw in ['python', 'javascript', 'code', 'developer']):
+            return ContentCategory.TECH_PROGRAMMING
+        else:
+            return ContentCategory.GENERAL_NEWS
 
 
 # Export
