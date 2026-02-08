@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional, Dict
 from dotenv import load_dotenv
 import logging
+from .cookie_loader import get_cookie_loader
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,9 @@ class CookieManager:
     def __init__(self):
         """Initialize cookie manager and load cookies from environment"""
         
+        # Initialize cookie loader for JSON cookies
+        self.cookie_loader = get_cookie_loader()
+        
         # Load all cookies from environment
         self.cookies = {
             'reddit': os.getenv('REDDIT_COOKIE'),
@@ -70,10 +74,10 @@ class CookieManager:
         missing = [k for k, v in self.cookies.items() if not v]
         
         if available:
-            logger.info(f"✅ Cookies loaded: {', '.join(available)}")
+            logger.info(f"✅ Cookies loaded from .env: {', '.join(available)}")
         
         if missing:
-            logger.debug(f"⚠️  Missing cookies: {', '.join(missing)}")
+            logger.debug(f"⚠️  Missing .env cookies: {', '.join(missing)}")
     
     def get_reddit_cookie(self) -> Optional[str]:
         """Get Reddit session cookie (primary auth)"""
@@ -118,6 +122,63 @@ class CookieManager:
     def get_substack_cookie(self) -> Optional[str]:
         """Get Substack session cookie"""
         return self.cookies.get('substack')
+    
+    def get_cookies_for_site_json(self, site: str) -> Optional[Dict[str, str]]:
+        """
+        Get cookies from JSON file (EditThisCookie export).
+        
+        Falls back to .env cookies if JSON not found.
+        
+        Args:
+            site: Site name (reddit, twitter, medium, etc)
+        
+        Returns:
+            Dict of cookie name -> value, or None if no cookies
+        """
+        json_cookies = self.cookie_loader.get_cookie_dict(site)
+        
+        if json_cookies:
+            logger.info(f"✅ Using JSON cookies for {site} ({len(json_cookies)} cookies)")
+            return json_cookies
+        
+        # Fallback to env-based single cookie
+        env_cookie = self.cookies.get(site)
+        if env_cookie:
+            logger.debug(f"⚠️  Falling back to .env cookie for {site}")
+            return {site: env_cookie}
+        
+        return None
+    
+    def get_headers_for_site(self, site: str) -> Dict[str, str]:
+        """
+        Get HTTP headers for any site with JSON cookie support.
+        
+        Attempts to use JSON cookies first, falls back to .env.
+        
+        Args:
+            site: Site name (reddit, twitter, medium, etc)
+        
+        Returns:
+            Headers dict with User-Agent and Cookie header
+        """
+        headers = {
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/120.0.0.0 Safari/537.36'
+            ),
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'DNT': '1',
+        }
+        
+        cookies_dict = self.get_cookies_for_site_json(site)
+        
+        if cookies_dict:
+            cookie_header = '; '.join(f'{k}={v}' for k, v in cookies_dict.items())
+            headers['Cookie'] = cookie_header
+        
+        return headers
     
     def get_headers_for_reddit(self) -> Dict[str, str]:
         """

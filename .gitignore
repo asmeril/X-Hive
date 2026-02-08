@@ -17,6 +17,11 @@ apps/worker/.env
 apps/worker/approval/.env
 **/.env
 
+# Cookies (EditThisCookie exports - sensitive authentication data)
+apps/worker/cookies/*.json
+!apps/worker/cookies/README.md
+!apps/worker/cookies/.gitkeep
+
 # Logs & Data
 *.log
 *.sqlite
@@ -24,3 +29,4 @@ apps/worker/approval/.env
 # OS
 .DS_Store
 Thumbs.db
+
