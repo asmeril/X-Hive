@@ -5,7 +5,7 @@ from intel.cookie_loader import get_cookie_loader
 
 cl = get_cookie_loader()
 
-sites = ['reddit', 'twitter', 'medium', 'perplexity', 'substack', 'linkedin', 'github', 'producthunt', 'youtube', 'arxiv', 'google_trends']
+sites = ['reddit', 'twitter', 'medium', 'perplexity', 'substack', 'linkedin', 'github', 'producthunt', 'youtube', 'arxiv', 'google_trends', 'discord']
 
 print("=" * 60)
 print("CEREZ YUKLEME RAPORU")
