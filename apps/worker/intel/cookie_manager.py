@@ -12,6 +12,7 @@ Manages authentication cookies for:
 - GitHub (user_session)
 - Product Hunt (_producthunt_session)
 - Substack (substack.sid)
+- Arxiv (optional auth)
 
 Usage:
     from intel.cookie_manager import get_cookie_manager
@@ -48,6 +49,7 @@ class CookieManager:
     - GitHub (user_session)
     - Product Hunt (_producthunt_session)
     - Substack (substack.sid)
+    - Arxiv (optional auth)
     """
     
     def __init__(self):
@@ -67,6 +69,7 @@ class CookieManager:
             'github': os.getenv('GITHUB_USER_SESSION'),
             'producthunt': os.getenv('PRODUCTHUNT_COOKIE'),
             'substack': os.getenv('SUBSTACK_COOKIE'),
+            'arxiv': os.getenv('ARXIV_COOKIE'),
         }
         
         # Log which cookies are available

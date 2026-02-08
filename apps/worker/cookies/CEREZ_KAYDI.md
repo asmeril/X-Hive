@@ -74,6 +74,18 @@
 8. Kaydet
 ```
 
+### Arxiv için:
+```
+1. https://arxiv.org adresine git
+2. (İsteğe bağlı giriş - Arxiv çoğunlukla kimliksiz kullanılır)
+3. Eğer giriş yaptıysan: EditThisCookie ikonu
+4. "Export" tuşu
+5. JSON kopyala
+6. apps/worker/cookies/arxiv.json dosyasını aç
+7. Yapıştır
+8. Kaydet
+```
+
 ---
 
 ## 3. JSON Formatı Kontrol Et

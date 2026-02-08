@@ -15,6 +15,7 @@ from .base_source import (
     ContentSourceError,
     CATEGORY_TARGETS
 )
+from .cookie_manager import get_cookie_manager
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +45,12 @@ class ArxivSource(BaseContentSource):
         days_back: int = 7
     ):
         super().__init__()
+        self.cookie_manager = get_cookie_manager()
         self.categories = categories or list(self.CATEGORIES.keys())
         self.max_results = max_results
         self.days_back = days_back
+        
+        logger.info(f"✅ ArxivSource initialized ({len(self.categories)} categories)")
     
     def get_source_name(self) -> str:
         """Get source name"""
