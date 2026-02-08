@@ -15,6 +15,7 @@ from .base_source import (
     ContentItem,
     ContentCategory
 )
+from .cookie_manager import get_cookie_manager
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class PerplexityScraper(BaseContentSource):
         """
         super().__init__()
         self.limit = limit
+        self.cookie_manager = get_cookie_manager()
         
         logger.info("✅ PerplexityScraper initialized")
     
@@ -49,12 +51,8 @@ class PerplexityScraper(BaseContentSource):
         
         items = []
         
-        headers = {
-            'User-Agent': (
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36'
-            )
-        }
+        # Use JSON cookies if available, fall back to default headers
+        headers = self.cookie_manager.get_headers_for_site('perplexity')
         
         try:
             async with aiohttp.ClientSession() as session:

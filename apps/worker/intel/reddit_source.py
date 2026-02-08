@@ -136,7 +136,8 @@ class RedditSource(BaseContentSource):
             Headers dict
         """
         if old_reddit:
-            return self.cookie_manager.get_headers_for_reddit()
+            # Use JSON cookies if available, fall back to .env
+            return self.cookie_manager.get_headers_for_site('reddit')
 
         headers = {
             'User-Agent': (

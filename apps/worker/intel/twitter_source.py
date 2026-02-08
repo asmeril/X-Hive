@@ -218,7 +218,8 @@ class TwitterSource(BaseContentSource):
         # This is complex - using simplified approach
         
         url = f"{self.BASE_URL}/{username}"
-        headers = self.cookie_manager.get_headers_for_twitter()
+        # Use JSON cookies if available, fall back to .env
+        headers = self.cookie_manager.get_headers_for_site('twitter')
         
         items = []
         

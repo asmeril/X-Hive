@@ -96,7 +96,8 @@ class MediumScraper(BaseContentSource):
         """Fetch articles for a topic"""
         
         url = f"https://medium.com/tag/{topic}"
-        headers = self.cookie_manager.get_headers_for_medium()
+        # Try JSON cookies first, fall back to .env
+        headers = self.cookie_manager.get_headers_for_site('medium')
         
         items = []
         
