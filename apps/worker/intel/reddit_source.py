@@ -18,6 +18,7 @@ from .base_source import (
     ContentCategory,
     ContentSourceError
 )
+from .cookie_manager import get_cookie_manager
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class RedditSource(BaseContentSource):
         limit: int = 10
     ):
         """
-        Initialize Reddit scraper.
+        Initialize Reddit scraper with cookie authentication.
         
         Args:
             subreddits: Custom subreddit mapping
@@ -70,11 +71,27 @@ class RedditSource(BaseContentSource):
         """
         super().__init__()
         
+        # Get cookie manager
+        self.cookie_manager = get_cookie_manager()
+        
         self.subreddits = subreddits or self.SUBREDDITS
         self.time_filter = time_filter
         self.limit = min(limit, 25)
         
-        logger.info(f"✅ RedditSource initialized ({len(self.subreddits)} subreddits, scraping mode)")
+        # Check if cookie available
+        has_cookie = self.cookie_manager.validate_cookie('reddit')
+        
+        logger.info(
+            f"✅ RedditSource initialized "
+            f"({len(self.subreddits)} subreddits, "
+            f"{'with' if has_cookie else 'without'} cookie)"
+        )
+        
+        if not has_cookie:
+            logger.warning(
+                "⚠️  No Reddit cookie found. Scraping may be rate-limited.\n"
+                "   Run: python tools/cookie_extractor.py"
+            )
     
     def get_source_name(self) -> str:
         """Get source name"""
@@ -116,12 +133,15 @@ class RedditSource(BaseContentSource):
         logger.info(f"✅ Reddit: Scraped {len(items)} posts from {len(self.subreddits)} subreddits")
         return items
     
+    def _get_headers(self) -> dict:
+        """Get request headers with cookie from cookie manager"""
+        return self.cookie_manager.get_headers_for_reddit()
+    
     async def _scrape_subreddit(self, session: aiohttp.ClientSession, subreddit: str) -> List[dict]:
         url = f"{self.BASE_URL}/r/{subreddit}/top/?t={self.time_filter}"
         
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+        # Use cookie manager for headers
+        headers = self._get_headers()
         
         try:
             async with session.get(url, headers=headers) as response:
