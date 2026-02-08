@@ -21,6 +21,7 @@ async def quick_test():
         ('intel.arxiv_source', 'arxiv_source', 'ArXiv'),
         ('intel.producthunt_source', 'producthunt_source', 'Product Hunt'),
         ('intel.google_trends_source', 'google_trends_source', 'Google Trends'),
+           ('intel.twitter_source', 'twitter_source', 'Twitter/X'),  # Added Twitter source
     ]
     
     passed = 0
