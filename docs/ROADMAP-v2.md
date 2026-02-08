@@ -1,63 +1,81 @@
 # X-HIVE v2.0 ROADMAP
 
-## Mission
-Autonomous Twitter content engine with:
-- 12 diverse content sources
-- 8 content categories
-- Dynamic influencer discovery
-- AI-powered Turkish tweet generation
-- Desktop approval interface
+## Misyon
+Otonom Twitter içerik motoru:
+- 12+ çeşitli içerik kaynağı
+- 8 içerik kategorisi
+- Dinamik influencer keşfi
+- AI destekli Türkçe tweet üretimi
+- Masaüstü onay arayüzü
 
-## Overall Progress
+## Genel İlerleme
 
 ```
-Phase 1: Content Sources        [████████░░] 80% (In Progress)
-Phase 2: Influencer System      [██░░░░░░░░] 20% (Planning)
-Phase 3: Category Distribution  [█░░░░░░░░░] 10% (Planning)
-Phase 4: Desktop App            [░░░░░░░░░░] 0% (Not Started)
+Aşama 1: İçerik Kaynakları        [████████░░] 80% (Devam ediyor)
+Aşama 2: Influencer Sistemi       [██░░░░░░░░] 20% (Planlama)
+Aşama 3: Kategori Dağılımı        [█░░░░░░░░░] 10% (Planlama)
+Aşama 4: Desktop Uygulama         [░░░░░░░░░░] 0% (Başlamadı)
 ```
 
 ---
 
-## COOKIE AUTHENTICATION STRATEGY 🍪
+## KAYNAK DURUMU (ŞUBAT 2026)
 
-**Decision:** Use cookie-based authentication instead of APIs where possible
+- **HuggingFace**: ✅ Çalışıyor, 50+ içerik, cookie/public, async, 3 kategori
+- **Product Hunt**: ✅ Çalışıyor, OAuth2, token yenileme, fallback, 20+ içerik
+- **Google Trends**: ⚠️ Sadece Playwright scraping çalışıyor, tüm API endpointleri 404
+- **Twitter Trends**: ⚠️ Kod hazır, test ve cookie gerekiyor
 
-### Why Cookies?
+**Google Trends fallback:**
+- pytrends, RSS, JSON endpointler → 404/bozuk
+- Playwright ile browser scraping → ÇALIŞIYOR (çoklu ülke desteği var)
+- Otomatik fallback zinciri: pytrends → JSON → Playwright
 
-**Cost Savings:**
-- Twitter API (reading): $150/month → **$0 with cookies**
-- Reddit API: Restricted/slow approval → **Instant with cookies**
-- Medium: Paywall → **Bypass with cookies**
+**Testler:**
+- test_trends_scraper.py: JSON endpointler 404
+- debug_trends.py: Playwright ile browserda trendler görünüyor, extraction logic çalışıyor
 
-**Total Savings: ~$150/month = $1,800/year**
+---
 
-### Cookie Management
+## COOKIE AUTHENTICATION STRATEJİSİ 🍪
 
-#### 1. Auto Cookie Extractor Tool
+**Karar:** API yerine mümkün olan her yerde cookie tabanlı kimlik doğrulama
 
-**Tool:** `apps/worker/tools/cookie_extractor.py`
+### Neden Cookie?
 
-**Features:**
-- Interactive browser sessions (Playwright)
-- User logs in manually (secure)
-- Cookies extracted automatically
-- Saved to .env automatically
-- Supports 8 platforms simultaneously
+**Maliyet Avantajı:**
+- Twitter API (okuma): $150/ay → **Cookie ile $0**
+- Reddit API: Kısıtlı/yavaş onay → **Cookie ile anında**
+- Medium: Paywall → **Cookie ile atlanıyor**
 
-**Time Required:** ~15 minutes for all platforms
+**Toplam Tasarruf: ~$150/ay = $1.800/yıl**
 
-#### 2. Cookie Manager Module
+### Cookie Yönetimi
 
-**Module:** `apps/worker/intel/cookie_manager.py`
+#### 1. Otomatik Cookie Extractor Aracı
 
-**Features:**
-- Centralized cookie storage
-- Platform-specific headers
-- Cookie validation
-- Easy integration with sources
+**Araç:** `apps/worker/tools/cookie_extractor.py`
 
-#### 3. Supported Platforms
+**Özellikler:**
+- Playwright ile interaktif oturum
+- Kullanıcı manuel giriş yapar (güvenli)
+- Cookie'ler otomatik çıkarılır
+- .env'e kaydedilir
+- 8+ platformu destekler
+
+**Süre:** Tüm platformlar için ~15 dakika
+
+#### 2. Cookie Manager Modülü
+
+**Modül:** `apps/worker/intel/cookie_manager.py`
+
+**Özellikler:**
+- Merkezi cookie saklama
+- Platforma özel header yönetimi
+- Cookie doğrulama
+- Kaynaklara kolay entegrasyon
+
+#### 3. Desteklenen Platformlar
 
 | Platform | Cookie Name | Status | Priority | Benefit |
 |----------|-------------|--------|----------|---------|

@@ -1,55 +1,55 @@
 # X-HIVE
 
-Viral X presence automation: 3 daily posts with Telegram-based approval workflow.
+Viral X otomasyonu: Telegram tabanlı onay akışı ile günde 3 paylaşım.
 
-## Mission
-Automate social media content generation, curation, and posting to X (Twitter) with AI-powered decision making and human approval gates.
+## Misyon
+AI destekli karar mekanizması ve insan onayı ile sosyal medya içerik üretimi, kürasyonu ve X (Twitter) paylaşımının otomasyonu.
 
-## Features
+## Özellikler
 
-### Daily Posts
-- **Target**: 3 posts per day
-- **Approval**: Telegram bot (SEND / EDIT / SKIP)
-- **Risk Management**: High-risk/controversial content → auto SKIP
+### Günlük Paylaşımlar
+- **Hedef**: Günde 3 paylaşım
+- **Onay**: Telegram botu (SEND / EDIT / SKIP)
+- **Risk Yönetimi**: Yüksek riskli/kontraversiyel içerik → otomatik SKIP
 
-### Intel Sources
-- Telegram channels (Tele-Sentinel)
+### Intel Kaynakları
+- Telegram kanalları (Tele-Sentinel)
 - Prediction markets
-- X seed accounts (≥50 followers)
+- X seed hesaplar (≥50 takipçi)
 
-### Global Lock Standard
-- **Path**: `C:\XHive\locks\x_session.lock`
-- **Purpose**: Prevent concurrent execution with XiDeAI_Pro
-- **TTL**: 24 hours (auto-cleanup)
+### Global Lock Standardı
+- **Yol**: `C:\XHive\locks\x_session.lock`
+- **Amaç**: XiDeAI_Pro ile eşzamanlı çalışmayı engellemek
+- **TTL**: 24 saat (otomatik temizlik)
 
-## Architecture
+## Mimari
 
 ```
 X-HIVE Monorepo
 ├── apps/
-│   ├── desktop/           # Tauri + React UI (approval interface)
-│   └── worker/            # Python FastAPI + Playwright (automation)
+│   ├── desktop/           # Tauri + React UI (onay arayüzü)
+│   └── worker/            # Python FastAPI + Playwright (otomasyon)
 ├── packages/
-│   └── contracts/         # Shared schemas & types
-└── docs/                  # Procedures & documentation
+│   └── contracts/         # Ortak şemalar & tipler
+└── docs/                  # Prosedürler & dokümantasyon
 ```
 
 ### Desktop (Tauri + React)
-- Seed account management
-- Draft review interface
-- Real-time worker status
-- Telegram integration notifications
+- Seed hesap yönetimi
+- Taslak inceleme arayüzü
+- Gerçek zamanlı worker durumu
+- Telegram entegrasyon bildirimleri
 
 ### Worker (Python FastAPI + Playwright)
-- Intel gathering from multiple sources
-- Post generation and queuing
-- Automated X.com posting
-- Telegram approval workflow
-- Scheduler with daily 3-post target
+- Çoklu kaynaktan intel toplama
+- İçerik üretimi ve kuyruğa alma
+- Otomatik X.com paylaşımı
+- Telegram onay akışı
+- Günlük 3 paylaşım hedefli zamanlayıcı
 
-## Getting Started
+## Başlangıç
 
-### Worker Setup
+### Worker Kurulumu
 ```bash
 cd apps/worker
 python -m venv venv
