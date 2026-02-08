@@ -98,6 +98,18 @@
 8. Kaydet
 ```
 
+### Discord için:
+```
+1. https://discord.com adresine git
+2. Giriş yap
+3. EditThisCookie ikonu
+4. "Export" tuşu
+5. JSON kopyala
+6. apps/worker/cookies/discord.json dosyasını aç
+7. Yapıştır
+8. Kaydet
+```
+
 ---
 
 ## 3. JSON Formatı Kontrol Et

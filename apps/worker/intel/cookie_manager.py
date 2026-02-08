@@ -14,6 +14,7 @@ Manages authentication cookies for:
 - Substack (substack.sid)
 - Arxiv (optional auth)
 - Google Trends (optional auth)
+- Discord (optional auth)
 
 Usage:
     from intel.cookie_manager import get_cookie_manager
@@ -52,6 +53,7 @@ class CookieManager:
     - Substack (substack.sid)
     - Arxiv (optional auth)
     - Google Trends (optional auth)
+    - Discord (optional auth)
     """
     
     def __init__(self):
@@ -73,6 +75,7 @@ class CookieManager:
             'substack': os.getenv('SUBSTACK_COOKIE'),
             'arxiv': os.getenv('ARXIV_COOKIE'),
             'google_trends': os.getenv('GOOGLE_TRENDS_COOKIE'),
+            'discord': os.getenv('DISCORD_COOKIE'),
         }
         
         # Log which cookies are available
