@@ -22,7 +22,7 @@ from intel.twitter_source import TwitterSource
 from intel.arxiv_source import ArxivSource
 from intel.producthunt_source import ProductHuntSource
 from intel.google_trends_source import GoogleTrendsSource
-from intel.github_source import GitHubSource
+from intel.github_source import GitHubTrendingSource
 from intel.substack_scraper import SubstackScraper
 from intel.medium_scraper import MediumScraper
 from intel.perplexity_scraper import PerplexityScraper
@@ -50,7 +50,7 @@ async def test_all_sources():
         (PerplexityScraper(), "Perplexity"),
         (YouTubeSource(), "YouTube"),
         (LinkedInSource(), "LinkedIn"),
-        (GitHubSource(), "GitHub"),
+        (GitHubTrendingSource(), "GitHub"),
     ]
     
     results = {}
