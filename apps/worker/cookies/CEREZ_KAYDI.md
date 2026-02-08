@@ -86,6 +86,18 @@
 8. Kaydet
 ```
 
+### Google Trends için:
+```
+1. https://trends.google.com adresine git
+2. (İsteğe bağlı giriş - Google Trends çoğunlukla kimliksiz kullanılır)
+3. Eğer giriş yaptıysan: EditThisCookie ikonu
+4. "Export" tuşu
+5. JSON kopyala
+6. apps/worker/cookies/google_trends.json dosyasını aç
+7. Yapıştır
+8. Kaydet
+```
+
 ---
 
 ## 3. JSON Formatı Kontrol Et

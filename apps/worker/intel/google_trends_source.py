@@ -15,6 +15,7 @@ from .base_source import (
     ContentSourceError,
     CATEGORY_TARGETS
 )
+from .cookie_manager import get_cookie_manager
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,12 @@ class GoogleTrendsSource(BaseContentSource):
         limit: int = 20
     ):
         super().__init__()
+        self.cookie_manager = get_cookie_manager()
         self.pytrends = TrendReq(hl='en-US', tz=360)
         self.geo = geo
         self.limit = limit
+        
+        logger.info(f"✅ GoogleTrendsSource initialized (geo={geo}, limit={limit})")
     
     def get_source_name(self) -> str:
         """Get source name"""
