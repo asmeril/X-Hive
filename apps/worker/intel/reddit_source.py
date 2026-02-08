@@ -14,6 +14,7 @@ from typing import List, Optional
 from datetime import datetime
 import re
 import json
+import os
 
 from .base_source import (
     BaseContentSource,
@@ -68,7 +69,8 @@ class RedditSource(BaseContentSource):
         subreddits: Optional[dict] = None,
         time_filter: str = 'day',
         limit: int = 10,
-        use_old_reddit: bool = True
+        use_old_reddit: bool = True,
+        use_playwright_fallback: bool = True
     ):
         """
         Initialize Reddit scraper with JWT support.
@@ -78,6 +80,7 @@ class RedditSource(BaseContentSource):
             time_filter: Time filter (hour/day/week/month/year)
             limit: Posts per subreddit (max 25)
             use_old_reddit: Use old.reddit.com (more reliable)
+            use_playwright_fallback: Use Playwright fallback on 403
         """
         super().__init__()
         
@@ -88,9 +91,12 @@ class RedditSource(BaseContentSource):
         self.time_filter = time_filter
         self.limit = min(limit, 25)
         self.use_old_reddit = use_old_reddit
+        self.use_playwright_fallback = use_playwright_fallback
         
         # Check if cookie available
         self.jwt_token = self.cookie_manager.get_reddit_cookie()
+        self.token_v2 = self.cookie_manager.get_reddit_token_v2()
+        self.csrf_token = self.cookie_manager.get_reddit_csrf()
         
         if not self.jwt_token:
             logger.warning(
@@ -110,34 +116,14 @@ class RedditSource(BaseContentSource):
         return "Reddit"
     
     async def fetch_latest(self) -> List[ContentItem]:
-        """Fetch top posts from all configured subreddits"""
+        """
+        Reddit: Placeholder (JWT auth complexity - defer to Phase 2)
         
-        items = []
-        
-        connector = aiohttp.TCPConnector(limit=10)
-        timeout = aiohttp.ClientTimeout(total=30)
-        
-        async with aiohttp.ClientSession(
-            connector=connector,
-            timeout=timeout
-        ) as session:
-            
-            for subreddit_name, category in self.subreddits.items():
-                try:
-                    if self.use_old_reddit:
-                        posts = await self._scrape_old_reddit(session, subreddit_name, category)
-                    else:
-                        posts = await self._scrape_modern_reddit(session, subreddit_name, category)
-                    
-                    items.extend(posts)
-                    logger.debug(f"Fetched {len(posts)} posts from r/{subreddit_name}")
-                
-                except Exception as e:
-                    logger.error(f"❌ Error fetching r/{subreddit_name}: {e}")
-                    continue
-        
-        logger.info(f"✅ Reddit: Fetched {len(items)} posts from {len(self.subreddits)} subreddits")
-        return items
+        Modern Reddit requires complex JWT Bearer token flow.
+        Will implement in Phase 2 with proper OAuth flow.
+        """
+        logger.info("ℹ️  Reddit: Temporarily skipped (JWT auth - implement in Phase 2)")
+        return []
     
     def _get_headers(self, old_reddit: bool = True) -> dict:
         """
@@ -149,6 +135,9 @@ class RedditSource(BaseContentSource):
         Returns:
             Headers dict
         """
+        if old_reddit:
+            return self.cookie_manager.get_headers_for_reddit()
+
         headers = {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -160,15 +149,14 @@ class RedditSource(BaseContentSource):
             'DNT': '1',
             'Connection': 'keep-alive',
         }
-        
-        if self.jwt_token:
-            if old_reddit:
-                # Old Reddit uses cookie
-                headers['Cookie'] = f'reddit_session={self.jwt_token}'
-            else:
-                # Modern Reddit uses Bearer token
-                headers['Authorization'] = f'Bearer {self.jwt_token}'
-        
+
+        bearer = self.token_v2 or self.jwt_token
+        if bearer:
+            headers['Authorization'] = f'Bearer {bearer}'
+
+        if self.csrf_token:
+            headers['X-CSRF-Token'] = self.csrf_token
+
         return headers
     
     async def _scrape_old_reddit(
@@ -203,8 +191,14 @@ class RedditSource(BaseContentSource):
                     headers.pop('Cookie', None)
                     async with session.get(url, headers=headers) as retry_response:
                         if retry_response.status != 200:
-                            return items
-                        html = await retry_response.text()
+                            if self.use_playwright_fallback:
+                                html = await self._fetch_with_playwright(url)
+                                if not html:
+                                    return items
+                            else:
+                                return items
+                        else:
+                            html = await retry_response.text()
                 elif response.status == 429:
                     logger.warning(f"⚠️  Rate limited on r/{subreddit}")
                     return items
@@ -311,6 +305,67 @@ class RedditSource(BaseContentSource):
             logger.error(f"❌ Error scraping r/{subreddit}: {e}")
         
         return items
+
+    async def _fetch_with_playwright(self, url: str) -> Optional[str]:
+        """Fetch page HTML using Playwright (fallback for 403)."""
+        try:
+            from playwright.async_api import async_playwright
+        except Exception as e:
+            logger.warning(f"Playwright not available: {e}")
+            return None
+
+        user_agent = (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Safari/537.36'
+        )
+
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                context = await browser.new_context(user_agent=user_agent)
+
+                cookies = []
+                session_cookie = self.cookie_manager.get_reddit_cookie()
+                if session_cookie:
+                    cookies.append({
+                        'name': 'reddit_session',
+                        'value': session_cookie,
+                        'domain': '.reddit.com',
+                        'path': '/',
+                    })
+
+                csrf = self.cookie_manager.get_reddit_csrf()
+                if csrf:
+                    cookies.append({
+                        'name': 'csrf_token',
+                        'value': csrf,
+                        'domain': '.reddit.com',
+                        'path': '/',
+                    })
+
+                loid = os.getenv('REDDIT_LOID')
+                if loid:
+                    cookies.append({
+                        'name': 'loid',
+                        'value': loid,
+                        'domain': '.reddit.com',
+                        'path': '/',
+                    })
+
+                if cookies:
+                    await context.add_cookies(cookies)
+
+                page = await context.new_page()
+                await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                html = await page.content()
+
+                await context.close()
+                await browser.close()
+                return html
+        except Exception as e:
+            logger.warning(f"Playwright fetch failed: {e}")
+            return None
     
     async def _scrape_modern_reddit(
         self,

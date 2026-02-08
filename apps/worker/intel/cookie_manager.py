@@ -76,8 +76,16 @@ class CookieManager:
             logger.debug(f"⚠️  Missing cookies: {', '.join(missing)}")
     
     def get_reddit_cookie(self) -> Optional[str]:
-        """Get Reddit session cookie"""
+        """Get Reddit session cookie (primary auth)"""
         return self.cookies.get('reddit')
+
+    def get_reddit_token_v2(self) -> Optional[str]:
+        """Get Reddit token_v2 (access token)"""
+        return os.getenv('REDDIT_TOKEN_V2')
+
+    def get_reddit_csrf(self) -> Optional[str]:
+        """Get Reddit CSRF token"""
+        return os.getenv('REDDIT_CSRF')
     
     def get_twitter_cookie(self) -> Optional[str]:
         """Get Twitter auth token"""
@@ -113,10 +121,10 @@ class CookieManager:
     
     def get_headers_for_reddit(self) -> Dict[str, str]:
         """
-        Get HTTP headers with Reddit cookie.
+        Get HTTP headers with Reddit cookies.
         
         Returns:
-            Headers dict
+            Headers dict with multiple Reddit cookies
         """
         headers = {
             'User-Agent': (
@@ -130,9 +138,25 @@ class CookieManager:
             'Connection': 'keep-alive',
         }
         
-        cookie = self.get_reddit_cookie()
-        if cookie:
-            headers['Cookie'] = f'reddit_session={cookie}'
+        cookie_parts = []
+        
+        session = self.get_reddit_cookie()
+        if session:
+            cookie_parts.append(f'reddit_session={session}')
+        
+        csrf = self.get_reddit_csrf()
+        if csrf:
+            cookie_parts.append(f'csrf_token={csrf}')
+        
+        loid = os.getenv('REDDIT_LOID')
+        if loid:
+            cookie_parts.append(f'loid={loid}')
+        
+        if cookie_parts:
+            headers['Cookie'] = '; '.join(cookie_parts)
+        
+        if csrf:
+            headers['X-CSRF-Token'] = csrf
         
         return headers
     

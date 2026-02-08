@@ -33,6 +33,7 @@ try:
     from intel.arxiv_source import arxiv_source
     from intel.producthunt_source import producthunt_source
     from intel.google_trends_source import google_trends_source
+        from intel.twitter_source import twitter_source
     from intel.base_source import ContentCategory, CATEGORY_TARGETS
 except ImportError as e:
     print(f"❌ Failed to import sources: {e}")
@@ -204,6 +205,7 @@ async def test_all_sources():
         (arxiv_source, "ArXiv"),
         (producthunt_source, "Product Hunt"),
         (google_trends_source, "Google Trends"),
+        (twitter_source, "Twitter/X"),
     ]
     
     all_results = []
