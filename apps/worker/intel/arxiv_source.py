@@ -7,7 +7,7 @@ Fetches latest research papers from ArXiv.org
 import arxiv
 import logging
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from .base_source import (
     BaseContentSource,
     ContentItem,
@@ -72,11 +72,9 @@ class ArxivSource(BaseContentSource):
                 )
                 
                 for paper in search.results():
-                    # Filter by date
-                    if paper.published < datetime.now() - timedelta(days=self.days_back):
-                        continue
-                    
-                    # Create ContentItem
+                # Filter by date
+                if paper.published < datetime.now(timezone.utc) - timedelta(days=self.days_back):
+                    continue                    # Create ContentItem
                     item = ContentItem(
                         title=paper.title,
                         url=paper.entry_id,
