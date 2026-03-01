@@ -170,6 +170,51 @@ class CookieLoader:
         jar = self.get_aiohttp_cookies(site)
         
         return aiohttp.ClientSession(cookie_jar=jar)
+    
+    def get_playwright_cookies(self, site: str) -> List[dict]:
+        """
+        Get cookies in Playwright format for browser automation.
+        
+        Args:
+            site: Site name
+        
+        Returns:
+            List of cookie dicts in Playwright format
+        """
+        cookies = self.load_cookies(site)
+        
+        playwright_cookies = []
+        for cookie in cookies:
+            try:
+                pw_cookie = {
+                    'name': cookie.get('name'),
+                    'value': cookie.get('value'),
+                    'domain': cookie.get('domain'),
+                    'path': cookie.get('path', '/'),
+                }
+                
+                # Optional fields
+                if 'expires' in cookie or 'expirationDate' in cookie:
+                    pw_cookie['expires'] = cookie.get('expires') or cookie.get('expirationDate')
+                
+                if 'httpOnly' in cookie:
+                    pw_cookie['httpOnly'] = cookie.get('httpOnly')
+                
+                if 'secure' in cookie:
+                    pw_cookie['secure'] = cookie.get('secure')
+                
+                if 'sameSite' in cookie:
+                    sameSite = cookie.get('sameSite')
+                    if sameSite in ['Strict', 'Lax', 'None']:
+                        pw_cookie['sameSite'] = sameSite
+                
+                playwright_cookies.append(pw_cookie)
+            
+            except Exception as e:
+                logger.debug(f"Error converting cookie to Playwright format: {e}")
+                continue
+        
+        return playwright_cookies
 
 
 # Global instance

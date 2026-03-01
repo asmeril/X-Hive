@@ -19,21 +19,31 @@ Aşama 4: Desktop Uygulama         [░░░░░░░░░░] 0% (Başlama
 
 ---
 
-## KAYNAK DURUMU (ŞUBAT 2026)
+## KAYNAK DURUMU (MART 2026)
 
 - **HuggingFace**: ✅ Çalışıyor, 50+ içerik, cookie/public, async, 3 kategori
 - **Product Hunt**: ✅ Çalışıyor, OAuth2, token yenileme, fallback, 20+ içerik
-- **Google Trends**: ⚠️ Sadece Playwright scraping çalışıyor, tüm API endpointleri 404
-- **Twitter Trends**: ⚠️ Kod hazır, test ve cookie gerekiyor
+- **Google Trends**: ✅ Çalışıyor (Playwright scraping), çoklu ülke desteği
+- **Twitter Trends**: ❌ Kod hazır ama geçerli login cookie'si gerekiyor
 
 **Google Trends fallback:**
 - pytrends, RSS, JSON endpointler → 404/bozuk
-- Playwright ile browser scraping → ÇALIŞIYOR (çoklu ülke desteği var)
+- Playwright ile browser scraping → ✅ ÇALIŞIYOR (çoklu ülke desteği var)
 - Otomatik fallback zinciri: pytrends → JSON → Playwright
+
+**Twitter Trends durum:**
+- API endpoint 403 döndürüyor (authentication hatası)
+- Playwright fallback hazır ve test edildi
+- Cookie loader ve Playwright cookie injection çalışıyor
+- **Gerekli:** Twitter'a login olup `cookies/twitter.json` güncellemek
+- `debug_twitter_trends.py`: Browser'da sayfa açılıyor, screenshot alınıyor
+- Test: `test_twitter_trends.py` hazır, cookie güncellenince çalışacak
 
 **Testler:**
 - test_trends_scraper.py: JSON endpointler 404
-- debug_trends.py: Playwright ile browserda trendler görünüyor, extraction logic çalışıyor
+- debug_trends.py: Playwright ile browserda Google Trends görünüyor
+- debug_twitter_trends.py: Twitter sayfası açılıyor, cookie geçersiz
+- test_twitter_trends.py: API 403, Playwright fallback çalışıyor ama trend bulamıyor (auth gerekli)
 
 ---
 
