@@ -64,7 +64,7 @@ async def test_all_sources():
         
         try:
             # Add timeout to prevent hanging (120s for Substack with 6 newsletters fetched in parallel)
-            timeout = 120.0 if source_name == "Substack" else 30.0
+            timeout = 120.0 if source_name == "Substack" else (60.0 if source_name == "Reddit" else 30.0)
             items = await asyncio.wait_for(
                 source.fetch_latest(),
                 timeout=timeout

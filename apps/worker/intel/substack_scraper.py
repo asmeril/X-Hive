@@ -31,7 +31,7 @@ class SubstackScraper(BaseContentSource):
     NEWSLETTERS = {
         # AI/ML
         'www.importai.com': ContentCategory.AI_ML,
-        'thealgorithmicbridge.substack.com': ContentCategory.AI_ML,
+        'ai.plainenglish.io': ContentCategory.AI_ML,  # Replaced thealgorithmicbridge (403)
         
         # Tech/Programming
         'newsletter.pragmaticengineer.com': ContentCategory.TECH_PROGRAMMING,
@@ -39,7 +39,7 @@ class SubstackScraper(BaseContentSource):
         
         # Startup/Business
         'www.lennysnewsletter.com': ContentCategory.STARTUP_BUSINESS,
-        'every.to': ContentCategory.STARTUP_BUSINESS,
+        'www.every.to': ContentCategory.STARTUP_BUSINESS,  # Fixed: added www subdomain (was 404)
     }
     
     def __init__(

@@ -201,21 +201,216 @@ class TwitterSource(BaseContentSource):
             List of ContentItem objects
         """
         
-        # Try cookie-based scraping first
+        # Try Playwright first (most reliable)
+        try:
+            items = await self._fetch_user_tweets_with_playwright(username, category)
+            if items:
+                logger.debug(f"✅ Playwright: fetched {len(items)} tweets from @{username}")
+                return items
+        except Exception as e:
+            logger.debug(f"❌ Playwright failed for @{username}: {e}")
+        
+        # Try cookie-based scraping second
         if self.use_cookies:
             try:
                 items = await self._fetch_user_tweets_with_cookies(username, category)
                 if items:
                     logger.debug(f"✅ Cookie auth: fetched {len(items)} tweets from @{username}")
                     return items
+                else:
+                    logger.debug(f"⚠️  Cookie auth returned 0 items for @{username}, trying Nitter fallback")
             except Exception as e:
-                logger.debug(f"Cookie auth failed for @{username}: {e}")
+                logger.debug(f"❌ Cookie auth failed for @{username}: {e}, trying Nitter fallback")
         
         # Fallback to Nitter
         if self.fallback_to_nitter:
             return await self._fetch_user_tweets_nitter(username, category)
         
         return []
+    
+    async def _fetch_user_tweets_with_playwright(
+        self,
+        username: str,
+        category: ContentCategory
+    ) -> List[ContentItem]:
+        """
+        Fetch user tweets using Playwright (XiDeAI Pro method).
+        
+        Most reliable method - uses Playwright to scrape X.com with cookies.
+        Parses <article> elements like XiDeAI Pro does.
+        """
+        
+        items = []
+        
+        try:
+            from playwright.async_api import async_playwright
+            
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                
+                context = await browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                )
+                
+                # Load cookies
+                playwright_cookies = self.cookie_loader.get_playwright_cookies('twitter')
+                if playwright_cookies:
+                    await context.add_cookies(playwright_cookies)
+                
+                page = await context.new_page()
+                
+                try:
+                    # Navigate to user timeline
+                    url = f"https://x.com/{username}"
+                    await page.goto(url, wait_until='domcontentloaded', timeout=20000)
+                    
+                    # Wait for React to render
+                    await page.wait_for_timeout(5000)
+                    
+                    # Try to wait for article elements
+                    try:
+                        await page.wait_for_selector('article', timeout=10000)
+                    except:
+                        logger.debug(f"No article elements found for @{username}")
+                    
+                    # Check if we're on login page
+                    page_url = page.url
+                    if 'login' in page_url or 'i/flow' in page_url:
+                        logger.debug(f"Redirected to login page for @{username}")
+                        return []
+                    
+                    # Extract tweets from <article> elements (XiDeAI Pro method)
+                    tweets_data = await page.evaluate('''() => {
+                        const articles = document.querySelectorAll('article');
+                        const tweets = [];
+                        
+                        for (let article of articles) {
+                            try {
+                                // Author
+                                const namesEl = article.querySelector('[data-testid="User-Names"]');
+                                let author = '';
+                                if (namesEl) {
+                                    const text = namesEl.textContent;
+                                    const match = text.match(/@(\\w+)/);
+                                    author = match ? '@' + match[1] : '';
+                                }
+                                
+                                // Text
+                                const textEl = article.querySelector('[data-testid="tweetText"]');
+                                const text = textEl ? textEl.textContent : '';
+                                
+                                // Skip too short
+                                if (text.length < 10) continue;
+                                
+                                // URL
+                                const linkEl = article.querySelector('a[href*="/status/"]');
+                                const url = linkEl ? linkEl.href : '';
+                                
+                                // Time
+                                const timeEl = article.querySelector('time');
+                                const datetime = timeEl ? timeEl.getAttribute('datetime') : '';
+                                
+                                // Stats (likes, retweets)
+                                let likes = 0;
+                                let retweets = 0;
+                                
+                                const likeButton = article.querySelector('[data-testid="like"]');
+                                if (likeButton) {
+                                    const likeText = likeButton.getAttribute('aria-label') || '';
+                                    const likeMatch = likeText.match(/(\\d+)/);
+                                    if (likeMatch) likes = parseInt(likeMatch[1]);
+                                }
+                                
+                                const retweetButton = article.querySelector('[data-testid="retweet"]');
+                                if (retweetButton) {
+                                    const rtText = retweetButton.getAttribute('aria-label') || '';
+                                    const rtMatch = rtText.match(/(\\d+)/);
+                                    if (rtMatch) retweets = parseInt(rtMatch[1]);
+                                }
+                                
+                                if (url && text) {
+                                    tweets.push({
+                                        author: author,
+                                        text: text,
+                                        url: url,
+                                        datetime: datetime,
+                                        likes: likes,
+                                        retweets: retweets
+                                    });
+                                }
+                            } catch (e) {
+                                console.error('Error parsing tweet:', e);
+                            }
+                        }
+                        
+                        return tweets;
+                    }''')
+                    
+                    # Convert to ContentItems
+                    for tweet_data in tweets_data[:self.tweets_per_influencer]:
+                        try:
+                            # Parse datetime
+                            published_at = datetime.now(timezone.utc)
+                            if tweet_data.get('datetime'):
+                                try:
+                                    published_at = datetime.fromisoformat(
+                                        tweet_data['datetime'].replace('Z', '+00:00')
+                                    )
+                                except:
+                                    pass
+                            
+                            text = tweet_data['text']
+                            
+                            item = ContentItem(
+                                title=text[:100] + ('...' if len(text) > 100 else ''),
+                                url=tweet_data['url'],
+                                source_type='twitter',
+                                source_name=f"Twitter - @{username}",
+                                published_at=published_at,
+                                category=category,
+                                description=text,
+                                author=tweet_data.get('author', f'@{username}')
+                            )
+                            
+                            # Calculate scores based on engagement
+                            likes = tweet_data.get('likes', 0)
+                            retweets = tweet_data.get('retweets', 0)
+                            
+                            item.relevance_score = self._calculate_relevance(likes, retweets)
+                            item.engagement_score = self._calculate_engagement(likes, retweets)
+                            
+                            items.append(item)
+                        
+                        except Exception as e:
+                            logger.debug(f"Error creating ContentItem from tweet: {e}")
+                            continue
+                    
+                    logger.debug(f"Playwright fetched {len(items)} tweets from @{username}")
+                
+                except Exception as e:
+                    logger.debug(f"Playwright page error for @{username}: {e}")
+                finally:
+                    try:
+                        await page.close()
+                    except:
+                        pass
+                    
+                    try:
+                        await context.close()
+                    except:
+                        pass
+                    
+                    try:
+                        await browser.close()
+                    except:
+                        pass
+        
+        except ImportError:
+            logger.debug("Playwright not available")
+        except Exception as e:
+            logger.debug(f"Playwright fetch failed for @{username}: {e}")
+        
+        return items
     
     async def _fetch_user_tweets_with_cookies(
         self,

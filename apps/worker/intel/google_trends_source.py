@@ -347,7 +347,7 @@ class GoogleTrendsSource(BaseContentSource):
         elif any(kw in trend_lower for kw in ['python', 'javascript', 'code', 'developer']):
             return ContentCategory.TECH_PROGRAMMING
         else:
-            return ContentCategory.GENERAL_NEWS
+            return ContentCategory.NEWS
 
 
 # Export
