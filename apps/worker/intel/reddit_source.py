@@ -7,6 +7,7 @@ across all 8 content categories using web scraping.
 Supports JWT authentication for modern Reddit.
 """
 
+import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
 import logging
@@ -117,13 +118,59 @@ class RedditSource(BaseContentSource):
     
     async def fetch_latest(self) -> List[ContentItem]:
         """
-        Reddit: Placeholder (JWT auth complexity - defer to Phase 2)
+        Fetch latest posts from configured subreddits.
         
-        Modern Reddit requires complex JWT Bearer token flow.
-        Will implement in Phase 2 with proper OAuth flow.
+        Uses old.reddit.com by default (more reliable).
+        Falls back to Playwright on 403 errors.
+        
+        Returns:
+            List of ContentItem from all subreddits
         """
-        logger.info("ℹ️  Reddit: Temporarily skipped (JWT auth - implement in Phase 2)")
-        return []
+        logger.info(f"📡 Fetching Reddit posts from {len(self.subreddits)} subreddits...")
+        
+        items = []
+        
+        async with aiohttp.ClientSession() as session:
+            for subreddit, category_str in self.subreddits.items():
+                try:
+                    # Convert category string to enum
+                    if isinstance(category_str, str):
+                        category = ContentCategory[category_str.upper()]
+                    else:
+                        category = category_str
+                    
+                    # Fetch from old Reddit
+                    if self.use_old_reddit:
+                        subreddit_items = await self._scrape_old_reddit(
+                            session, subreddit, category
+                        )
+                    else:
+                        # Modern Reddit (requires more complex auth)
+                        subreddit_items = await self._scrape_modern_reddit(
+                            session, subreddit, category
+                        )
+                    
+                    items.extend(subreddit_items)
+                    
+                    if subreddit_items:
+                        logger.info(
+                            f"✅ r/{subreddit}: {len(subreddit_items)} posts"
+                        )
+                    else:
+                        logger.warning(f"⚠️  r/{subreddit}: 0 posts")
+                    
+                    # Rate limiting
+                    await asyncio.sleep(0.5)
+                    
+                except Exception as e:
+                    logger.error(
+                        f"❌ Error fetching r/{subreddit}: {e}",
+                        exc_info=True
+                    )
+                    continue
+        
+        logger.info(f"✅ Reddit: Fetched {len(items)} total posts")
+        return items
     
     def _get_headers(self, old_reddit: bool = True) -> dict:
         """

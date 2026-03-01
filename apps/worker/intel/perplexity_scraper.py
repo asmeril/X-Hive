@@ -67,9 +67,14 @@ class PerplexityScraper(BaseContentSource):
                 ) as response:
                     
                     if response.status == 403:
-                        # TODO: Playwright fallback (currently disabled due to timeout issues)
-                        logger.warning("⚠️  403 from Perplexity - Playwright fallback disabled")
-                        return items
+                        logger.warning("⚠️  403 from Perplexity, trying Playwright...")
+                        # Fallback to Playwright
+                        playwright_helper = await get_playwright_helper()
+                        html = await playwright_helper.fetch_simple(self.DISCOVER_URL, wait_time=3)
+                        
+                        if not html:
+                            logger.error("❌ Playwright fallback also failed")
+                            return items
                     
                     elif response.status == 200:
                         html = await response.text()

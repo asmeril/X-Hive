@@ -17,6 +17,40 @@ AI destekli karar mekanizması ve insan onayı ile sosyal medya içerik üretimi
 - Prediction markets
 - X seed hesaplar (≥50 takipçi)
 
+**Working Sources (9 total - ~309 items):**
+
+*API-Based (Fast, No Auth):*
+- ✅ **Hacker News**: 30 items (~2s)
+- ✅ **ArXiv**: 120 papers (~5s)
+- ✅ **Product Hunt**: 20 products (~3s)
+- ✅ **Substack**: 9 newsletters (~8s, RSS, 4/6 feeds)
+- ✅ **HuggingFace**: 50 models (~5s)
+- ✅ **GitHub Trending**: 25 repos (~5s) ✅ FIXED
+- ✅ **Polymarket**: 15 prediction markets (~3s) 🆕 NEW
+- ✅ **RSS News**: 20 items (~5s, 5/6 feeds) 🆕 NEW
+
+*Cookie-Based (Require Auth):*
+- ✅ **Twitter/X Trends**: 20 trends (~30s, Playwright) ✅ FIXED
+
+**Issues/Blocked:**
+- ⚠️ **Reddit**: Timeout issues (needs investigation)
+- ⚠️ **Google Trends**: RSS feed 404 error
+- ❌ **Perplexity**: Cloudflare JS challenge
+- ❌ **Medium**: Cloudflare (archived to `_archived/`)
+
+**Recent Integrations from HiveProjesi:**
+- 🆕 **Polymarket**: Prediction market intelligence (Gamma API with fallback endpoints)
+- 🆕 **RSS News**: Multi-domain aggregator (BBC World, Nature, Defense News, NewAtlas, Medical News, AutoBlog)
+
+**Future Enhancements (from HiveProjesi):**
+- 📋 Enhanced GitHub: Topic-based search (AI, TECH, FINANCE) with 48-hour window
+- 📋 Enhanced HuggingFace: Topic filtering (FINANCE, BUSINESS, PERSONAL, GLOBAL, TECH)
+
+**Not Implemented:**
+- ⏸️ Twitter/X (influencer tweets) - needs implementation
+- ⏸️ YouTube - needs implementation  
+- ⏸️ LinkedIn - needs implementation
+
 ### Global Lock Standardı
 - **Yol**: `C:\XHive\locks\x_session.lock`
 - **Amaç**: XiDeAI_Pro ile eşzamanlı çalışmayı engellemek

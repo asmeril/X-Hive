@@ -8,7 +8,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 import logging
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -37,6 +37,7 @@ class ProductHuntSource(BaseContentSource):
     """
     
     API_BASE = "https://api.producthunt.com/v2/api/graphql"
+    OAUTH_URL = "https://api.producthunt.com/v2/oauth/token"
     
     def __init__(
         self,
@@ -51,11 +52,14 @@ class ProductHuntSource(BaseContentSource):
         load_dotenv()
         
         self.api_token = api_token or os.getenv('PRODUCTHUNT_API_TOKEN')
+        self.api_key = os.getenv('PRODUCTHUNT_API_KEY')
+        self.api_secret = os.getenv('PRODUCTHUNT_API_SECRET')
+        self.api_token_expires_at = None
         self.days_back = days_back
         self.limit = limit
         
         # Note: API token is optional - will fall back to web scraping
-        if not self.api_token:
+        if not self.api_token and not (self.api_key and self.api_secret):
             logger.info("ℹ️  Product Hunt API token not found - using web scraping")
         
         logger.info(f"✅ ProductHuntSource initialized (limit={limit})")
@@ -66,6 +70,18 @@ class ProductHuntSource(BaseContentSource):
     
     async def fetch_latest(self) -> List[ContentItem]:
         """Fetch latest Product Hunt products"""
+
+        # Refresh token if expired
+        if self.api_token_expires_at and datetime.now(timezone.utc) >= self.api_token_expires_at:
+            self.api_token = None
+            self.api_token_expires_at = None
+
+        # If no token but key/secret available, request a token
+        if not self.api_token and self.api_key and self.api_secret:
+            try:
+                self.api_token = await self._fetch_api_token()
+            except Exception as e:
+                logger.warning(f"⚠️  Product Hunt token fetch failed, using scraping: {e}")
         
         # Try API first if token available
         if self.api_token:
@@ -78,6 +94,36 @@ class ProductHuntSource(BaseContentSource):
         
         # Fallback to web scraping
         return await self._fetch_via_scraping()
+
+    async def _fetch_api_token(self) -> str:
+        """Fetch OAuth token using client credentials"""
+
+        payload = {
+            "client_id": self.api_key,
+            "client_secret": self.api_secret,
+            "grant_type": "client_credentials"
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                self.OAUTH_URL,
+                data=payload,
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as resp:
+                if resp.status != 200:
+                    raise ContentSourceError(f"Token endpoint returned {resp.status}")
+
+                data = await resp.json()
+
+        token = data.get("access_token")
+        if not token:
+            raise ContentSourceError("Token response missing access_token")
+
+        expires_in = data.get("expires_in")
+        if expires_in:
+            self.api_token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in) - 60)
+
+        return token
     
     async def _fetch_via_api(self) -> List[ContentItem]:
         """Fetch via Product Hunt API (requires token)"""

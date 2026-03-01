@@ -153,6 +153,8 @@ class TwitterTrendsSource(BaseContentSource):
         """Fetch trends via Playwright browser automation (fallback)"""
         
         items = []
+        browser = None
+        context = None
         
         try:
             from playwright.async_api import async_playwright
@@ -173,25 +175,70 @@ class TwitterTrendsSource(BaseContentSource):
                 
                 try:
                     await page.goto('https://x.com/explore/tabs/trending', wait_until='networkidle', timeout=30000)
-                    await page.wait_for_timeout(3000)
+                    await page.wait_for_timeout(5000)
                     
                     # Extract trends from page
                     trends = await page.evaluate('''() => {
                         const trends = [];
-                        const trendElements = document.querySelectorAll('[data-testid="trend"]');
+                        const text = document.body.innerText;
+                        const lines = text.split('\\n');
                         
-                        for (const el of trendElements) {
-                            const textContent = el.innerText;
-                            const lines = textContent.split('\\n');
+                        let foundStart = false;
+                        
+                        for (let i = 0; i < lines.length && trends.length < 50; i++) {
+                            const line = lines[i].trim();
                             
-                            // Find the trend name (usually first non-numeric line)
-                            for (const line of lines) {
-                                if (line.trim() && 
-                                    !line.match(/^[0-9,KM]+$/) && 
-                                    !line.includes('Trending') && 
-                                    !line.includes('posts')) {
-                                    trends.push(line.trim());
-                                    break;
+                            // Start capturing after we see "1" as a standalone line
+                            if (!foundStart) {
+                                if (line === '1') {
+                                    foundStart = true;
+                                }
+                                continue;
+                            }
+                            
+                            // Skip empty
+                            if (!line || line.length < 2) continue;
+                            
+                            // PRIORITY 1: Accept hashtags immediately
+                            if (line.startsWith('#')) {
+                                trends.push(line);
+                                continue;
+                            }
+                            
+                            // Skip pure numbers (trend rankings)
+                            if (/^\\d+$/.test(line)) continue;
+                            
+                            // Skip pure symbols
+                            if (line === '·' || line === '.' || line === '•') continue;
+                            
+                            // Skip category lines (contain ·)
+                            if (line.includes('·')) {
+                                continue;
+                            }
+                            
+                            // Skip UI/navigation elements
+                            const skipWords = ['Anasayfa', 'Bildirimler', 'Keşfet', 'Sohbet', 
+                                             'Premium', 'Profil', 'Grok', 'Klavye',
+                                             'Yeni gönderileri', 'Gündemdekiler', 'Trendler'];
+                            if (skipWords.some(w => line.includes(w))) continue;
+                            
+                            // PRIORITY 2: Accept lines with Asian characters
+                            if (/[\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF\\uAC00-\\uD7AF]/.test(line)) {
+                                trends.push(line);
+                                continue;
+                            }
+                            
+                            // PRIORITY 3: Accept ALL CAPS trends
+                            if (/^[A-Z0-9\\s]+$/.test(line) && line.length > 3 && !line.includes(' ')) {
+                                trends.push(line);
+                                continue;
+                            }
+                            
+                            // PRIORITY 4: Accept mixed case with multiple capitals
+                            if (/[A-Z]/.test(line) && line.length > 4) {
+                                const capitals = (line.match(/[A-Z]/g) || []).length;
+                                if (capitals >= 2) {
+                                    trends.push(line);
                                 }
                             }
                         }
@@ -226,8 +273,24 @@ class TwitterTrendsSource(BaseContentSource):
                 except Exception as e:
                     logger.warning(f"⚠️  Playwright page error: {e}")
                 finally:
-                    await context.close()
-                    await browser.close()
+                    # Clean up page
+                    try:
+                        await page.close()
+                    except:
+                        pass
+                
+                # Clean up context and browser (outside page try-finally)
+                if context:
+                    try:
+                        await context.close()
+                    except:
+                        pass
+                
+                if browser:
+                    try:
+                        await browser.close()
+                    except:
+                        pass
         
         except ImportError:
             logger.warning("⚠️  Playwright not available")
@@ -256,7 +319,7 @@ class TwitterTrendsSource(BaseContentSource):
         elif any(kw in trend_lower for kw in ['python', 'javascript', 'code', 'developer']):
             return ContentCategory.TECH_PROGRAMMING
         else:
-            return ContentCategory.GENERAL_NEWS
+            return ContentCategory.SCIENCE  # Fallback category
 
 
 # Export

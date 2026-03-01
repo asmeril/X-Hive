@@ -130,6 +130,63 @@ class PlaywrightHelper:
                     await context.close()
                 except:
                     pass
+    
+    async def fetch_simple(
+        self,
+        url: str,
+        wait_time: int = 3,
+        timeout: int = 60000
+    ) -> Optional[str]:
+        """
+        Simple fetch without cookies (for public pages).
+        
+        Args:
+            url: Page URL
+            wait_time: Wait time in seconds after page load
+            timeout: Navigation timeout in milliseconds
+        
+        Returns:
+            Page HTML or None
+        """
+        await self.start()
+        
+        if not self.browser:
+            return None
+        
+        context = None
+        page = None
+        
+        try:
+            context = await self.browser.new_context()
+            page = await context.new_page()
+            
+            # Navigate
+            await page.goto(url, timeout=timeout, wait_until='domcontentloaded')
+            
+            # Wait for dynamic content
+            await page.wait_for_timeout(wait_time * 1000)
+            
+            # Get HTML
+            html = await page.content()
+            
+            logger.debug(f"Fetched {len(html)} bytes from {url}")
+            return html
+        
+        except Exception as e:
+            logger.error(f"❌ Playwright simple fetch error: {e}")
+            return None
+        
+        finally:
+            if page:
+                try:
+                    await page.close()
+                except:
+                    pass
+            if context:
+                try:
+                    await context.close()
+                except:
+                    pass
 
 
 # Global instance

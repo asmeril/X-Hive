@@ -9,10 +9,11 @@ import logging
 from datetime import datetime
 
 from intel.hackernews_source import hackernews_source
-from intel.twitter_source import twitter_source
+from intel.twitter_trends_source import twitter_trends_source
+from intel.reddit_source import reddit_source
 from intel.substack_scraper import substack_scraper
-from intel.medium_scraper import medium_scraper
-from intel.perplexity_scraper import perplexity_scraper
+from intel.polymarket_source import polymarket_source
+from intel.rss_news_source import rss_news_source
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,10 +32,11 @@ async def test_all_sources():
     
     sources = [
         (hackernews_source, "Hacker News"),
-        (twitter_source, "Twitter/X"),
+        (twitter_trends_source, "Twitter/X Trends"),
+        (reddit_source, "Reddit"),
         (substack_scraper, "Substack"),
-        (medium_scraper, "Medium"),
-        (perplexity_scraper, "Perplexity"),
+        (polymarket_source, "Polymarket"),
+        (rss_news_source, "RSS News"),
     ]
     
     results = {}

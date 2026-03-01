@@ -19,7 +19,7 @@ from .base_source import (
     ContentCategory
 )
 from .cookie_manager import get_cookie_manager
-from .playwright_helper import get_playwright_helper
+from .undetected_chrome_helper import get_undetected_chrome
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,8 @@ class MediumScraper(BaseContentSource):
     def __init__(
         self,
         topics: Optional[dict] = None,
-        articles_per_topic: int = 5
+        articles_per_topic: int = 5,
+        use_undetected_chrome: bool = True
     ):
         """
         Initialize Medium scraper.
@@ -53,12 +54,15 @@ class MediumScraper(BaseContentSource):
         Args:
             topics: Custom topic -> category mapping
             articles_per_topic: Articles to fetch per topic
+            use_undetected_chrome: Use undetected Chrome on 403
         """
         super().__init__()
         
         self.cookie_manager = get_cookie_manager()
+        self.chrome_helper = None  # Lazy initialization
         self.topics = topics or self.TOPICS
         self.articles_per_topic = articles_per_topic
+        self.use_undetected_chrome = use_undetected_chrome
         
         has_cookie = self.cookie_manager.validate_cookie('medium')
         
@@ -109,9 +113,15 @@ class MediumScraper(BaseContentSource):
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 
                 if response.status == 403:
-                    # TODO: Playwright fallback (currently disabled due to timeout issues)
-                    logger.warning(f"⚠️  403 for {topic} - Playwright fallback disabled")
-                    return items
+                    if self.use_undetected_chrome:
+                        logger.info(f"📡 403 for {topic} - trying undetected Chrome...")
+                        html = await self._fetch_with_undetected_chrome(url)
+                        if not html:
+                            logger.warning(f"⚠️  Undetected Chrome failed for {topic}")
+                            return items
+                    else:
+                        logger.warning(f"⚠️  403 for {topic} - undetected Chrome disabled")
+                        return items
                 
                 elif response.status == 200:
                     html = await response.text()
@@ -182,6 +192,66 @@ class MediumScraper(BaseContentSource):
                     continue
         
         return items
+    
+    async def _fetch_with_undetected_chrome(self, url: str) -> Optional[str]:
+        """
+        Fetch page using undetected Chrome (bypasses Cloudflare).
+        Runs in executor since undetected Chrome is synchronous.
+        
+        Args:
+            url: URL to fetch
+        
+        Returns:
+            HTML content or None
+        """
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def _fetch_sync():
+            """Synchronous fetch for thread executor"""
+            try:
+                import time as time_module
+                start = time_module.time()
+                
+                # Lazy initialize Chrome helper
+                if not self.chrome_helper:
+                    logger.info("Initializing Chrome helper...")
+                    self.chrome_helper = get_undetected_chrome()
+                    self.chrome_helper.start(headless=True)
+                    logger.info(f"Chrome started in {time_module.time() - start:.1f}s")
+                
+                # Get cookies
+                playwright_cookies = self.cookie_manager.cookie_loader.get_playwright_cookies('medium')
+                logger.info(f"Loaded {len(playwright_cookies)} Medium cookies")
+                
+                # Fetch with cookies
+                fetch_start = time_module.time()
+                html = self.chrome_helper.fetch_with_cookies(
+                    url=url,
+                    cookies=playwright_cookies,
+                    wait_time=5
+                )
+                logger.info(f"Fetch completed in {time_module.time() - fetch_start:.1f}s")
+                
+                return html
+                
+            except Exception as e:
+                logger.error(f"❌ Undetected Chrome error: {e}")
+                return None
+        
+        # Run in thread executor with timeout
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            try:
+                html = await asyncio.wait_for(
+                    loop.run_in_executor(executor, _fetch_sync),
+                    timeout=60  # 60 seconds max
+                )
+            except asyncio.TimeoutError:
+                logger.error("❌ Undetected Chrome fetch timed out after 60s")
+                return None
+        
+        return html
 
 
 # Global instance

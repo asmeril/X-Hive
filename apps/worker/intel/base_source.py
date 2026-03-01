@@ -22,6 +22,8 @@ class ContentCategory(str, Enum):
     MOBILE_APPS = "mobile_apps"                  # 5% target
     SECURITY_PRIVACY = "security_privacy"        # 5% target
     SCIENCE = "science"                          # 5% target
+    PREDICTION_MARKET = "prediction_market"      # prediction markets
+    NEWS = "news"                                # general news
 
 
 # Category distribution targets for balanced content
@@ -34,6 +36,8 @@ CATEGORY_TARGETS = {
     ContentCategory.MOBILE_APPS: 0.05,
     ContentCategory.SECURITY_PRIVACY: 0.05,
     ContentCategory.SCIENCE: 0.05,
+    ContentCategory.PREDICTION_MARKET: 0.0,  # supplementary
+    ContentCategory.NEWS: 0.0,  # supplementary
 }
 
 

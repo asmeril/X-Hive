@@ -381,3 +381,7 @@ async def test_github_source():
         print(f"   Relevance: {item.relevance_score:.2f}")
         print(f"   Engagement: {item.engagement_score:.2f}")
         print()
+
+
+# Global instance
+github_source = GitHubTrendingSource()

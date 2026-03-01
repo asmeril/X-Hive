@@ -25,7 +25,6 @@ from intel.google_trends_source import GoogleTrendsSource
 from intel.huggingface_source import huggingface_source
 from intel.github_source import GitHubTrendingSource
 from intel.substack_scraper import SubstackScraper
-from intel.medium_scraper import MediumScraper
 from intel.perplexity_scraper import PerplexityScraper
 from intel.youtube_source import YouTubeSource
 from intel.linkedin_source import LinkedInSource
@@ -47,8 +46,7 @@ async def test_all_sources():
         (ProductHuntSource(), "Product Hunt"),
         (GoogleTrendsSource(), "Google Trends"),
         (huggingface_source, "HuggingFace"),
-        # (SubstackScraper(), "Substack"),  # Temporarily skipped - slow RSS feeds
-        (MediumScraper(), "Medium"),
+        (SubstackScraper(), "Substack"),
         (PerplexityScraper(), "Perplexity"),
         (YouTubeSource(), "YouTube"),
         (LinkedInSource(), "LinkedIn"),
