@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "x-hive-desktop",
-  "version": "0.1.0",
-  "identifier": "com.asmeril.x-hive-desktop",
+  "productName": "XHive",
+  "version": "1.0.0",
+  "identifier": "com.asmeril.xhive",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "x-hive-desktop",
-        "width": 800,
-        "height": 600
+        "title": "XHive",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "center": true
       }
     ],
     "security": {
@@ -23,13 +27,20 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": ["Turkish", "English"],
+        "installMode": "currentUser"
+      }
+    }
   }
 }

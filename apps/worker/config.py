@@ -8,23 +8,36 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load .env file
-env_path = Path(__file__).parent / ".env"
-load_dotenv(dotenv_path=env_path)
+# Resolve AppData base directory
+# - Production: worker runs from %APPDATA%\XHive\worker → base = %APPDATA%\XHive
+# - Dev: worker runs from repo → base = C:\XHive (fallback)
+_appdata = os.environ.get("APPDATA", "")
+_appdata_base = Path(_appdata) / "XHive" if _appdata else Path(r"C:\XHive")
+
+# Load .env — check AppData first, then local
+_env_appdata = _appdata_base / "worker" / ".env"
+_env_local = Path(__file__).parent / ".env"
+_env_path = _env_appdata if _env_appdata.exists() else _env_local
+load_dotenv(dotenv_path=_env_path)
+
+# Cookie file: check AppData worker dir first, then local
+_cookie_appdata = _appdata_base / "worker" / "cookies" / "twitter.json"
+_cookie_local = Path(__file__).parent / "cookies" / "twitter.json"
+_default_cookie_path = str(_cookie_appdata if _cookie_appdata.exists() else _cookie_local)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_env_path),
         env_file_encoding="utf-8",
         extra="ignore"  # Ignore extra fields from .env
     )
-    
-    # File Paths
-    LOCK_PATH: str = r"C:\XHive\locks\x_session.lock"
-    DATA_PATH: str = r"C:\XHive\data"
-    BROWSER_DATA_DIR: str = r"C:\XHive\browser_data"
-    COOKIE_PATH: str = r"C:\XHive\data\x_cookies.json"
+
+    # File Paths — default to %APPDATA%\XHive, overridable via .env
+    LOCK_PATH: str = str(_appdata_base / "locks" / "x_session.lock")
+    DATA_PATH: str = str(_appdata_base / "data")
+    BROWSER_DATA_DIR: str = str(_appdata_base / "browser_data")
+    COOKIE_PATH: str = _default_cookie_path
     
     # Application Settings
     WORKER_PORT: int = 8765

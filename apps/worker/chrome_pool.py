@@ -237,10 +237,12 @@ class ChromePool:
             logger.error(f"Failed to save cookies: {e}")
 
     async def load_cookies(self) -> None:
-        r"""
+        """
         Load cookies from JSON file and add to context.
-        
-        Cookie path: C:\XHive\data\x_cookies.json
+
+        Supports two formats:
+        1. Playwright format: {"saved_at": "...", "cookies": [...]}
+        2. Chrome extension export format: [{"domain": ..., "expirationDate": ..., "name": ..., "value": ...}]
         """
         try:
             if not self.cookie_path.exists():
@@ -250,14 +252,46 @@ class ChromePool:
             with open(self.cookie_path, "r") as f:
                 data = json.load(f)
 
-            cookies = data.get("cookies", [])
+            # Format detection: list = Chrome extension export, dict = Playwright format
+            if isinstance(data, list):
+                raw_cookies = data
+            else:
+                raw_cookies = data.get("cookies", [])
 
-            if not cookies or not self.context:
+            if not raw_cookies or not self.context:
                 logger.debug("No cookies to load or context not available")
                 return
 
-            await self.context.add_cookies(cookies)
-            logger.info(f"✅ Loaded {len(cookies)} cookies from {self.cookie_path}")
+            # Normalize cookies to Playwright format
+            playwright_cookies = []
+            for c in raw_cookies:
+                # Chrome extension export uses 'expirationDate' (float), Playwright uses 'expires' (int)
+                cookie: Dict[str, Any] = {
+                    "name": c["name"],
+                    "value": c["value"],
+                    "domain": c["domain"],
+                    "path": c.get("path", "/"),
+                    "secure": c.get("secure", False),
+                    "httpOnly": c.get("httpOnly", False),
+                }
+                # Handle expiration
+                exp = c.get("expirationDate") or c.get("expires")
+                if exp is not None:
+                    cookie["expires"] = int(exp)
+                # sameSite: Playwright accepts 'Strict', 'Lax', 'None'
+                same_site = c.get("sameSite", "None")
+                if same_site in ("no_restriction", "unspecified", None, ""):
+                    cookie["sameSite"] = "None"
+                elif same_site.lower() == "lax":
+                    cookie["sameSite"] = "Lax"
+                elif same_site.lower() == "strict":
+                    cookie["sameSite"] = "Strict"
+                else:
+                    cookie["sameSite"] = "None"
+                playwright_cookies.append(cookie)
+
+            await self.context.add_cookies(playwright_cookies)
+            logger.info(f"Loaded {len(playwright_cookies)} cookies from {self.cookie_path}")
 
         except Exception as e:
             logger.error(f"Failed to load cookies: {e}")

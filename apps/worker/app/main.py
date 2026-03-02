@@ -5,9 +5,12 @@ Enhanced with comprehensive safety systems.
 
 import asyncio
 import sys
+import io
 
-# Python 3.14 Windows asyncio fix (MUST be before FastAPI imports)
+# Force UTF-8 encoding for stdout/stderr on Windows to avoid Unicode errors
 if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import logging
@@ -23,11 +26,15 @@ from chrome_pool import ChromePool, shutdown_chrome_pool
 from task_queue import TaskQueue, shutdown_task_queue
 from x_daemon import XDaemon
 from lock_manager import LockManager
+from orchestrator import Orchestrator, OrchestratorConfig
 
 # Safety modules (NEW)
 from rate_limiter import get_rate_limiter, OperationType as RateLimiterOpType
 from approval_manager import get_approval_manager, OperationType as ApprovalOpType
 from safety_logger import get_safety_logger
+
+# Approval queue for content items
+from approval.approval_queue import approval_queue
 
 # Configure logging
 logging.basicConfig(
@@ -63,7 +70,10 @@ async def lifespan(app: FastAPI):
     
     # Show safety banner (CRITICAL - NEVER SKIP)
     safety_logger = get_safety_logger()
-    safety_logger.print_startup_banner()
+    try:
+        safety_logger.print_startup_banner()
+    except Exception as e:
+        logger.warning(f"Safety banner display failed (non-critical): {e}")
     
     # Initialize rate limiter (loads history)
     rate_limiter = get_rate_limiter()
@@ -97,6 +107,37 @@ async def lifespan(app: FastAPI):
         logger.info("✅ X Daemon started")
     except Exception as e:
         logger.error(f"❌ X Daemon start failed: {e}")
+    
+    # Start Orchestrator (Main automation engine)
+    try:
+        orchestrator_config = OrchestratorConfig(
+            # Posting schedule
+            posts_per_day=3,
+            post_times=["09:00", "14:00", "20:00"],
+            
+            # Intel collection
+            intel_enabled=True,
+            intel_interval_hours=6,  # Her 6 saatte bir içerik topla
+            intel_sources=["github", "google_trends", "hackernews", "reddit", "producthunt"],
+            
+            # AI content generation
+            ai_enabled=True,
+            
+            # Approval system
+            require_approval=True,  # Desktop UI'dan onay gerekli
+            
+            # Health monitoring
+            health_check_interval_minutes=5
+        )
+        orchestrator = Orchestrator(config=orchestrator_config)
+        asyncio.create_task(orchestrator.run())
+        logger.info("✅ Orchestrator started (full auto-pilot mode)")
+        logger.info("📡 Intel collection: Every 6 hours")
+        logger.info("🤖 AI generation: Enabled")
+        logger.info("✋ Approval required: Yes (Desktop UI)")
+        logger.info("📅 Post schedule: 09:00, 14:00, 20:00")
+    except Exception as e:
+        logger.error(f"❌ Orchestrator start failed: {e}")
     
     logger.info("🎉 X-HIVE Worker startup complete!")
     
@@ -439,15 +480,82 @@ async def set_approval_mode(mode: str):
 
 @app.get("/approval/pending")
 async def get_pending_approvals():
-    """Get all pending approval requests"""
-    approval_manager = get_approval_manager()
-    pending = approval_manager.get_pending_requests()
-    
-    return {
-        "status": "ok",
-        "pending_count": len(pending),
-        "requests": pending
-    }
+    """Get all pending content items in approval queue"""
+    try:
+        pending = approval_queue.get_pending()
+        
+        # Convert to dict format
+        items = [item.to_dict() for item in pending]
+        
+        return {
+            "status": "success",
+            "data": {
+                "items": items,
+                "total": len(items)
+            }
+        }
+    except Exception as e:
+        logger.error(f"❌ Error fetching pending items: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "data": {
+                "items": [],
+                "total": 0
+            }
+        }
+
+
+@app.post("/approval/approve/{item_id}")
+async def approve_item(item_id: str):
+    """Approve a content item in the approval queue"""
+    try:
+        success = approval_queue.approve(item_id)
+        
+        if not success:
+            return {
+                "status": "error",
+                "message": f"Item not found: {item_id}"
+            }
+        
+        return {
+            "status": "success",
+            "message": "Item approved successfully",
+            "item_id": item_id,
+            "action": "approved"
+        }
+    except Exception as e:
+        logger.error(f"❌ Error approving item {item_id}: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.post("/approval/reject/{item_id}")
+async def reject_item(item_id: str):
+    """Reject a content item in the approval queue"""
+    try:
+        success = approval_queue.reject(item_id)
+        
+        if not success:
+            return {
+                "status": "error",
+                "message": f"Item not found: {item_id}"
+            }
+        
+        return {
+            "status": "success",
+            "message": "Item rejected successfully",
+            "item_id": item_id,
+            "action": "rejected"
+        }
+    except Exception as e:
+        logger.error(f"❌ Error rejecting item {item_id}: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 
 @app.post("/approval/action")

@@ -22,6 +22,14 @@ from approval_manager import ApprovalManager, OperationType
 from health_check import health_checker
 from metrics_collector import metrics_collector, increment_counter, record_timing
 from structured_logger import task_logger
+from approval.approval_queue import approval_queue
+
+# Intel sources
+from intel.github_source import GitHubTrendingSource
+from intel.google_trends_source import GoogleTrendsSource
+from intel.hackernews_source import HackerNewsSource
+from intel.reddit_source import RedditSource
+from intel.producthunt_source import ProductHuntSource
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +41,13 @@ class OrchestratorConfig:
     # Scheduling
     posts_per_day: int = 3
     post_times: list = field(default_factory=lambda: ["09:00", "14:00", "20:00"])
+
+    # Intel Collection
+    intel_enabled: bool = True
+    intel_interval_hours: int = 6  # Collect intel every 6 hours
+    intel_sources: list = field(default_factory=lambda: [
+        "github", "google_trends", "hackernews", "reddit", "producthunt"
+    ])
 
     # AI Generation
     ai_enabled: bool = True
@@ -157,6 +172,123 @@ class Orchestrator:
         logger.info("✅ Orchestrator stopped")
         task_logger.info("Orchestrator stopped")
 
+    async def run(self) -> None:
+        """
+        Main orchestrator loop - keeps running in background.
+        Handles:
+        - Auto-start on first run
+        - Intel collection every N hours
+        - AI content generation
+        - Post scheduling
+        - Continuous operation
+        - Graceful error handling
+        """
+        logger.info("🔄 Orchestrator run() loop started")
+        
+        # Start orchestrator if not already running
+        if not self._running:
+            await self.start()
+        
+        # Start intel collection task
+        if self.config.intel_enabled:
+            intel_task = asyncio.create_task(self._intel_collection_loop())
+            logger.info(f"📡 Intel collection started (every {self.config.intel_interval_hours}h)")
+        
+        # Keep running until stopped
+        try:
+            while self._running:
+                await asyncio.sleep(60)  # Check every minute
+        except asyncio.CancelledError:
+            logger.info("🛑 Orchestrator run() loop cancelled")
+            if self.config.intel_enabled:
+                intel_task.cancel()
+        except Exception as e:
+            logger.error(f"❌ Orchestrator run() loop error: {e}")
+            raise
+    
+    async def _intel_collection_loop(self) -> None:
+        """Background task for periodic intel collection"""
+        while self._running:
+            try:
+                logger.info("📡 Starting intel collection cycle...")
+                
+                # Collect from all enabled sources
+                all_items = []
+                
+                if "github" in self.config.intel_sources:
+                    try:
+                        github = GitHubTrendingSource(language="python", max_repos=10)
+                        items = await github.fetch_latest()
+                        all_items.extend(items)
+                        logger.info(f"✅ GitHub: {len(items)} items collected")
+                    except Exception as e:
+                        logger.error(f"❌ GitHub collection failed: {e}")
+                
+                if "google_trends" in self.config.intel_sources:
+                    try:
+                        trends = GoogleTrendsSource()
+                        items = await trends.fetch_latest()
+                        all_items.extend(items)
+                        logger.info(f"✅ Google Trends: {len(items)} items collected")
+                    except Exception as e:
+                        logger.error(f"❌ Google Trends collection failed: {e}")
+                
+                if "hackernews" in self.config.intel_sources:
+                    try:
+                        hn = HackerNewsSource(limit=10)
+                        items = await hn.fetch_latest()
+                        all_items.extend(items)
+                        logger.info(f"✅ HackerNews: {len(items)} items collected")
+                    except Exception as e:
+                        logger.error(f"❌ HackerNews collection failed: {e}")
+                
+                if "reddit" in self.config.intel_sources:
+                    try:
+                        reddit = RedditSource(limit=10)
+                        items = await reddit.fetch_latest()
+                        all_items.extend(items)
+                        logger.info(f"✅ Reddit: {len(items)} items collected")
+                    except Exception as e:
+                        logger.error(f"❌ Reddit collection failed: {e}")
+                
+                if "producthunt" in self.config.intel_sources:
+                    try:
+                        ph = ProductHuntSource(limit=10)
+                        items = await ph.fetch_latest()
+                        all_items.extend(items)
+                        logger.info(f"✅ ProductHunt: {len(items)} items collected")
+                    except Exception as e:
+                        logger.error(f"❌ ProductHunt collection failed: {e}")
+                
+                # Generate tweets from collected content
+                if all_items and self.config.ai_enabled:
+                    logger.info(f"🤖 Generating tweets from {len(all_items)} items...")
+                    for item in all_items:
+                        try:
+                            # Generate tweet
+                            tweet = await self.ai_generator.generate_tweet_from_content(item)
+                            
+                            # Add to approval queue
+                            approval_queue.add_item(
+                                content_item=item,
+                                generated_tweet=tweet
+                            )
+                            logger.info(f"✅ Tweet generated and queued: {tweet[:50]}...")
+                        except Exception as e:
+                            logger.error(f"❌ Tweet generation failed: {e}")
+                
+                logger.info(f"✅ Intel collection complete. {len(all_items)} items processed.")
+                
+                # Wait for next cycle
+                await asyncio.sleep(self.config.intel_interval_hours * 3600)
+                
+            except asyncio.CancelledError:
+                logger.info("🛑 Intel collection loop cancelled")
+                break
+            except Exception as e:
+                logger.error(f"❌ Intel collection loop error: {e}")
+                await asyncio.sleep(600)  # Retry after 10 minutes
+    
     async def create_approved_post(self, content: str) -> Dict[str, Any]:
         """Helper method to create post with approval workflow if needed"""
         try:

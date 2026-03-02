@@ -25,8 +25,15 @@ apps/worker/cookies/*.json
 # Logs & Data
 *.log
 *.sqlite
+*.png
+apps/worker/data/
+apps/worker/**/__pycache__/
+apps/worker/test_intel*.txt
+apps/worker/test_output.txt
+
+# Installer output (built artifacts)
+installer/output/
 
 # OS
 .DS_Store
 Thumbs.db
-
