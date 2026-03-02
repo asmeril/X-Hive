@@ -99,14 +99,17 @@ Source: "..\apps\worker\intel\youtube_source.py"; DestDir: "{localappdata}\{#MyA
 Source: "..\apps\worker\intel\__init__.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
 
 ; approval/ - onay sistemi (.env haric - credentials iceriyor)
+Source: "..\apps\worker\approval\__init__.py"; DestDir: "{localappdata}\{#MyAppName}\worker\approval"; Flags: ignoreversion
 Source: "..\apps\worker\approval\approval_queue.py"; DestDir: "{localappdata}\{#MyAppName}\worker\approval"; Flags: ignoreversion
 Source: "..\apps\worker\approval\telegram_notifier.py"; DestDir: "{localappdata}\{#MyAppName}\worker\approval"; Flags: ignoreversion
 
 ; posting/ - Twitter poster
+Source: "..\apps\worker\posting\__init__.py"; DestDir: "{localappdata}\{#MyAppName}\worker\posting"; Flags: ignoreversion
 Source: "..\apps\worker\posting\auto_poster.py"; DestDir: "{localappdata}\{#MyAppName}\worker\posting"; Flags: ignoreversion
 Source: "..\apps\worker\posting\twitter_poster.py"; DestDir: "{localappdata}\{#MyAppName}\worker\posting"; Flags: ignoreversion
 
 ; scheduling/ - zamanlayici
+Source: "..\apps\worker\scheduling\__init__.py"; DestDir: "{localappdata}\{#MyAppName}\worker\scheduling"; Flags: ignoreversion
 Source: "..\apps\worker\scheduling\post_scheduler.py"; DestDir: "{localappdata}\{#MyAppName}\worker\scheduling"; Flags: ignoreversion
 
 ; tools/ - yardimci araclar
