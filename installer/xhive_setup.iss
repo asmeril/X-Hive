@@ -283,10 +283,13 @@ begin
              '-m pip install -r "' + WorkerPath + '\requirements.txt" --quiet',
              WorkerPath, SW_HIDE, ewWaitUntilTerminated, ResultCode);
         // Playwright Chromium browser binary kur (pip install sadece wrapper kurar)
-        WizardForm.StatusLabel.Caption := 'Playwright Chromium tarayıcısı kuruluyor...';
-        Exec(VenvPath + '\Scripts\python.exe',
-             '-m playwright install chromium --with-deps',
-             WorkerPath, SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        WizardForm.StatusLabel.Caption := 'Playwright Chromium tarayıcısı kuruluyor (~200MB, bekleyin)...';
+        if not Exec(VenvPath + '\Scripts\python.exe',
+             '-m playwright install chromium',
+             WorkerPath, SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+          MsgBox('Playwright Chromium indirilemedi. Uygulama çalışacak ancak web kazıma özellikleri devre dışı kalabilir.' + #13#10 + 'Manuel kurulum: %LOCALAPPDATA%\XHive\worker\.venv\Scripts\python.exe -m playwright install chromium', mbInformation, MB_OK)
+        else if ResultCode <> 0 then
+          MsgBox('Playwright Chromium kurulum hatası (kod: ' + IntToStr(ResultCode) + ').' + #13#10 + 'Manuel kurulum: %LOCALAPPDATA%\XHive\worker\.venv\Scripts\python.exe -m playwright install chromium', mbInformation, MB_OK);
       end else
         MsgBox('Python sanal ortamı oluşturulamadı. Uygulamayı ilk açışınızda otomatik tekrar denenecek.', mbInformation, MB_OK);
     end else
@@ -296,10 +299,13 @@ begin
       Exec(VenvPath + '\Scripts\python.exe',
            '-m pip install -r "' + WorkerPath + '\requirements.txt" --quiet',
            WorkerPath, SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      WizardForm.StatusLabel.Caption := 'Playwright Chromium güncelleniyor...';
-      Exec(VenvPath + '\Scripts\python.exe',
-           '-m playwright install chromium --with-deps',
-           WorkerPath, SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      WizardForm.StatusLabel.Caption := 'Playwright Chromium güncelleniyor (~200MB, bekleyin)...';
+      if not Exec(VenvPath + '\Scripts\python.exe',
+           '-m playwright install chromium',
+           WorkerPath, SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+        MsgBox('Playwright Chromium güncellenemedi.' + #13#10 + 'Manuel kurulum: %LOCALAPPDATA%\XHive\worker\.venv\Scripts\python.exe -m playwright install chromium', mbInformation, MB_OK)
+      else if ResultCode <> 0 then
+        MsgBox('Playwright Chromium güncelleme hatası (kod: ' + IntToStr(ResultCode) + ').' + #13#10 + 'Manuel kurulum: %LOCALAPPDATA%\XHive\worker\.venv\Scripts\python.exe -m playwright install chromium', mbInformation, MB_OK);
     end;
   end;
 end;

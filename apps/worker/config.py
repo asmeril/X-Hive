@@ -9,9 +9,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Resolve AppData base directory
-# - Production: worker runs from %APPDATA%\XHive\worker → base = %APPDATA%\XHive
+# - Production: worker runs from %LOCALAPPDATA%\XHive\worker → base = %LOCALAPPDATA%\XHive
 # - Dev: worker runs from repo → base = C:\XHive (fallback)
-_appdata = os.environ.get("APPDATA", "")
+_appdata = os.environ.get("LOCALAPPDATA", "") or os.environ.get("APPDATA", "")
 _appdata_base = Path(_appdata) / "XHive" if _appdata else Path(r"C:\XHive")
 
 # Load .env — check AppData first, then local
