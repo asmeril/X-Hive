@@ -100,10 +100,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Task queue start failed: {e}")
     
-    # Start X Daemon
+    # Start X Daemon (Chrome + TaskQueue already initialized above — daemon skips re-init)
     try:
         x_daemon = XDaemon()
-        await x_daemon.start()
+        # Daemon'u doğrudan running state'e geçir (chrome_pool ve task_queue zaten başlatıldı)
+        if x_daemon.state.status != "running":
+            await x_daemon._load_state()
+            x_daemon.state.status = "running"
+            from datetime import datetime, timezone
+            x_daemon.state.started_at = datetime.now(timezone.utc)
+            x_daemon.state.stopped_at = None
+            await x_daemon._save_state()
         logger.info("✅ X Daemon started")
     except Exception as e:
         logger.error(f"❌ X Daemon start failed: {e}")

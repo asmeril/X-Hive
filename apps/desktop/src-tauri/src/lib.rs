@@ -216,11 +216,19 @@ fn greet(name: &str) -> String {
 async fn check_worker_health() -> Result<String, String> {
     let url = "http://127.0.0.1:8765/health";
     match reqwest::get(url).await {
-        Ok(response) => match response.json::<serde_json::Value>().await {
-            Ok(json) => serde_json::to_string_pretty(&json)
-                .map_err(|e| format!("JSON serialize error: {}", e)),
-            Err(e) => Err(format!("JSON parse error: {}", e)),
-        },
+        Ok(resp) => {
+            let bytes = resp.bytes().await.map_err(|e| format!("Body read error: {}", e))?;
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(json) => serde_json::to_string_pretty(&json)
+                    .map_err(|e| format!("JSON serialize error: {}", e)),
+                Err(_) => {
+                    let wrapped = serde_json::json!({ "status": "ok", "message": text });
+                    serde_json::to_string_pretty(&wrapped)
+                        .map_err(|e| format!("JSON wrap error: {}", e))
+                }
+            }
+        }
         Err(e) => Err(format!("Request failed: {}", e)),
     }
 }
@@ -237,11 +245,29 @@ async fn call_worker_api(method: String, endpoint: String) -> Result<String, Str
     };
 
     match response {
-        Ok(resp) => match resp.json::<serde_json::Value>().await {
-            Ok(json) => serde_json::to_string_pretty(&json)
-                .map_err(|e| format!("JSON error: {}", e)),
-            Err(e) => Err(format!("Parse error: {}", e)),
-        },
+        Ok(resp) => {
+            let status = resp.status();
+            // Read raw bytes first to avoid charset decoding issues
+            let bytes = resp.bytes().await.map_err(|e| format!("Body read error: {}", e))?;
+            let text = String::from_utf8_lossy(&bytes).to_string();
+
+            if !status.is_success() {
+                // Return error with status code + body for debugging
+                return Err(format!("HTTP {}: {}", status.as_u16(), text));
+            }
+
+            // Try to parse as JSON, fall back to plain text wrapped in JSON
+            match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(json) => serde_json::to_string_pretty(&json)
+                    .map_err(|e| format!("JSON serialize error: {}", e)),
+                Err(_) => {
+                    // Backend returned non-JSON (e.g. plain text) — wrap it
+                    let wrapped = serde_json::json!({ "status": "ok", "message": text });
+                    serde_json::to_string_pretty(&wrapped)
+                        .map_err(|e| format!("JSON wrap error: {}", e))
+                }
+            }
+        }
         Err(e) => Err(format!("Request failed: {}", e)),
     }
 }

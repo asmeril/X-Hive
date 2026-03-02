@@ -175,13 +175,16 @@ class XDaemon:
                 # Load previous state
                 await self._load_state()
 
-                # Start ChromePool
+                # Start ChromePool (non-fatal — Chrome may not be installed yet)
                 try:
                     await self.chrome_pool.initialize()
                     logger.info("✅ ChromePool started")
                 except Exception as e:
-                    logger.error(f"ChromePool initialization failed: {e}")
-                    raise XDaemonError(f"ChromePool startup failed: {e}")
+                    logger.warning(
+                        f"⚠️ ChromePool unavailable (Chrome/Playwright not installed?): {e}\n"
+                        "Daemon will run in limited mode — Twitter posting disabled."
+                    )
+                    # Continue without Chrome; Twitter operations will fail gracefully
 
                 # Start TaskQueue
                 try:
