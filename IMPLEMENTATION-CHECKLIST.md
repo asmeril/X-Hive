@@ -1,6 +1,16 @@
-# PHASE 1 - BATCH 1 IMPLEMENTATION CHECKLIST
+# PHASE 1 - IMPLEMENTATION CHECKLIST
 
 ## ✅ COMPLETED
+
+### Installer & Build (Son Güncelleme: 2 Mart 2026)
+- [x] Tauri `npm run tauri build` → `x-hive-desktop.exe` oluşturuldu
+- [x] Inno Setup installer: `installer/output/XHive_Setup_v1.0.0.exe`
+- [x] `lib.rs`: worker path `%APPDATA%` (Roaming) → `%LOCALAPPDATA%` (Local) düzeltildi
+- [x] `config.py`: `LOCALAPPDATA` öncelikli kullanım, tüm path'ler (locks, data, browser_data, cookies) düzeltildi
+- [x] Installer `[Files]`: wildcard `*` yerine explicit dosya listesi (`__pycache__` ve `approval/.env` hariç)
+- [x] `requirements.txt`: `telethon>=1.34.0` ve `lxml>=5.0.0` eklendi, tüm sürümler pinlendi
+- [x] `playwright install chromium` installer'a eklendi (hata yönetimi + manuel komut mesajı ile)
+- [x] Git: commit `1987c8c` push edildi
 
 ### Infrastructure
 - [x] Updated `base_source.py` with ContentCategory enum (8 categories)
@@ -269,13 +279,18 @@ for cat, target in CATEGORY_TARGETS.items():
 
 ## 🚀 DEPLOYMENT CHECKLIST
 
-### Local Testing
-- [ ] Install requirements: `pip install -r requirements.txt`
-- [ ] Set environment variables in `.env`
-- [ ] Run: `python test_phase1_sources.py`
-- [ ] Check logs for errors
+## 🚀 DEPLOYMENT CHECKLIST
 
-### Credentials Setup
+### Installer Kurulumu (Production)
+- [x] `installer/output/XHive_Setup_v1.0.0.exe` derlendi
+- [ ] Laptopda yeni installer test edildi
+- [ ] `%LOCALAPPDATA%\XHive\worker\` oluştuğu doğrulandı
+- [ ] `.venv\Scripts\python.exe` mevcut
+- [ ] `http://127.0.0.1:8765/health` → 200 OK
+- [ ] Playwright Chromium binary mevcut (`ms-playwright/chromium_*`)
+- [ ] Twitter cookie yenilendi (`cookies/twitter.json`)
+
+### Kimlik Bilgileri
 - [ ] Reddit:
   - [ ] Create app at https://www.reddit.com/prefs/apps
   - [ ] Get CLIENT_ID and CLIENT_SECRET
@@ -283,28 +298,37 @@ for cat, target in CATEGORY_TARGETS.items():
 - [ ] Product Hunt (optional):
   - [ ] Create API token at https://www.producthunt.com/settings/developers
   - [ ] Add to `.env`
-
-### Integration
-- [ ] Update aggregator.py to include all 5 sources
-- [ ] Test aggregation pipeline
-- [ ] Verify category distribution
-- [ ] Check deduplication
+- [ ] Gemini API Key (`GEMINI_API_KEY`)
+- [ ] Telegram Bot Token + Chat ID
+- [ ] Twitter cookies (`cookies/twitter.json`)
 
 ---
 
 ## ⚠️ KNOWN ISSUES
 
-1. **Reddit:** API credentials required (not free tier)
-2. **Product Hunt:** API token recommended (can work without)
-3. **ArXiv:** May rate limit on heavy load
-4. **Google Trends:** Occasional data unavailability
-5. **All:** Network errors handled gracefully
+1. **Twitter cookie geçersiz**: `cookies/twitter.json` yenilenmesi gerekiyor
+2. **Reddit**: API timeout (araştırılacak)
+3. **Google Trends**: RSS feed 404 hatası
+4. **Perplexity**: Cloudflare JS challenge (engellenmiş)
+5. **Medium**: Cloudflare (arşivlendi `_archived/`)
+6. **ArXiv**: Ağır yükte rate limit
+7. **Product Hunt**: API token olmadan sınırlı çalışır
 
 ---
 
-## 📝 NEXT PHASE
+## 📈 NEXT PHASE
 
-### BATCH 2: Twitter/X (Coming)
+### ÖNCELiKLi: Laptop Test
+- [ ] Yeni installer laptopda test et
+- [ ] Playwright Chromium binary doğrula
+- [ ] Twitter cookie yenile
+
+### PHASE 2: Influencer Sistemi
+- [ ] `data/influencers.json` DB şeması
+- [ ] Auto-discovery algoritması
+- [ ] Influencer tweet takip sistemi
+
+### BATCH 2: Twitter/X (Planlı)
 - [ ] Twitter Scraper (Nitter)
   - Scrape tweets without API limits
   - Viral tweet discovery
@@ -313,12 +337,12 @@ for cat, target in CATEGORY_TARGETS.items():
   - tweepy integration
   - Pay-as-you-go posting
 
-### BATCH 3: Web Scraping (Coming)
+### BATCH 3: Web Scraping (Planlı)
 - [ ] Substack (RSS feeds)
 - [ ] Medium (Web scraping)
 - [ ] Perplexity (Web scraping)
 
-### BATCH 4: Advanced (Coming)
+### BATCH 4: Advanced (Planlı)
 - [ ] YouTube (Data API)
 - [ ] Discord (Bot API)
 - [ ] GitHub (GraphQL API)

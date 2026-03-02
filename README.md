@@ -37,6 +37,7 @@ AI destekli karar mekanizması ve insan onayı ile sosyal medya içerik üretimi
 - ⚠️ **Google Trends**: RSS feed 404 error
 - ❌ **Perplexity**: Cloudflare JS challenge
 - ❌ **Medium**: Cloudflare (archived to `_archived/`)
+- ⚠️ **Twitter/X Trends**: `cookies/twitter.json` geçersiz → yenilenmesi gerekiyor
 
 **Recent Integrations from HiveProjesi:**
 - 🆕 **Polymarket**: Prediction market intelligence (Gamma API with fallback endpoints)
@@ -52,7 +53,7 @@ AI destekli karar mekanizması ve insan onayı ile sosyal medya içerik üretimi
 - ⏸️ LinkedIn - needs implementation
 
 ### Global Lock Standardı
-- **Yol**: `C:\XHive\locks\x_session.lock`
+- **Yol**: `%LOCALAPPDATA%\XHive\locks\x_session.lock`
 - **Amaç**: XiDeAI_Pro ile eşzamanlı çalışmayı engellemek
 - **TTL**: 24 saat (otomatik temizlik)
 
@@ -83,22 +84,35 @@ X-HIVE Monorepo
 
 ## Başlangıç
 
-### Worker Kurulumu
-```bash
-cd apps/worker
-python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # macOS/Linux
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8765
-```
+### 🖥️ Production Kurulum (Önerilen)
+1. `installer/output/XHive_Setup_v1.0.0.exe` dosyasını çalıştırın
+2. Installer otomatik olarak:
+   - `x-hive-desktop.exe` → `C:\Program Files\XHive\`
+   - Worker dosyaları → `%LOCALAPPDATA%\XHive\worker\`
+   - Python venv oluşturur ve tüm bağımlılıkları kurar
+   - Playwright Chromium binary'sini indirir (~200MB, birkaç dakika sürer)
+3. Kurulum bittikten sonra masaüstündeki XHive kısayolunu çalıştırın
 
-### Desktop Setup
+### 🔧 Geliştirici Kurulumu
 ```bash
+# Worker
+cd apps/worker
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python -m playwright install chromium
+uvicorn app.main:app --host 127.0.0.1 --port 8765
+
+# Desktop
 cd apps/desktop
 npm install
 npm run tauri dev
 ```
+
+### ⚠️ Kurulum Sonrası Yapılacaklar
+1. `%LOCALAPPDATA%\XHive\worker\.env` dosyasına API key'lerini gir
+2. Twitter cookie'sini yenile → `%LOCALAPPDATA%\XHive\worker\cookies\twitter.json`
+3. `http://127.0.0.1:8765/health` → 200 OK kontrolü yap
 
 ## Modules
 

@@ -1,3 +1,73 @@
+# X-Hive Implementation Summary
+
+> **Son güncelleme:** 2 Mart 2026 | **Git HEAD:** `1987c8c`
+
+---
+
+## 🏗️ Installer & Build Pipeline
+
+### Yapılan Düzeltmeler (commit `1987c8c` + `21f8d16`)
+
+| Dosya | Değişiklik |
+|-------|-----------|
+| `apps/desktop/src-tauri/src/lib.rs` | `%APPDATA%` (Roaming) → `%LOCALAPPDATA%` |
+| `apps/worker/config.py` | `LOCALAPPDATA` öncelikli path çözümleme |
+| `installer/xhive_setup.iss` | Explicit dosya listesi, `playwright install chromium` + hata yönetimi |
+| `apps/worker/requirements.txt` | `telethon>=1.34.0`, `lxml>=5.0.0` eklendi, sürümler pinlendi |
+
+### Installer Akışı (`XHive_Setup_v1.0.0.exe`)
+```
+1. x-hive-desktop.exe → C:\Program Files\XHive\
+2. Worker dosyaları → %LOCALAPPDATA%\XHive\worker\
+3. Python 3.11 yoksa → otomatik indir + kur
+4. python -m venv .venv
+5. pip install -r requirements.txt
+6. python -m playwright install chromium  ← ~200MB, kritik adım
+```
+
+### Kritik Uyarılar
+- ⚠️ `playwright install` adımı **~200MB** indirme yapar, 2-3 dk sürebilir
+- Başarısız olursa kullanıcıya manuel komut gösterilir
+- `--with-deps` flag'i kaldırıldı (admin gerektirebiliyordu)
+
+---
+
+## 🗂️ Production Dizin Yapısı
+
+```
+%LOCALAPPDATA%\XHive\
+├── worker\
+│   ├── app\main.py          ← FastAPI giriş noktası
+│   ├── intel\               ← Kaynak dosyaları
+│   ├── posting\             ← Twitter poster
+│   ├── approval\            ← Onay kuyruğu
+│   ├── scheduling\
+│   ├── tools\
+│   ├── .venv\               ← Python sanal ortam
+│   ├── .env                 ← API key'ler (kullanıcı doldurur)
+│   ├── requirements.txt
+│   └── cookies\
+│       └── twitter.json     ← Twitter oturum cookie'si
+├── data\                    ← Kalıcı veri
+├── locks\                   ← Session lock
+└── browser_data\            ← Playwright Chrome profili
+```
+
+---
+
+## 📋 config.py Path Çözümleme Mantığı
+
+```python
+# Öncelik: LOCALAPPDATA > APPDATA > C:\XHive (fallback)
+_appdata = os.environ.get("LOCALAPPDATA", "") or os.environ.get("APPDATA", "")
+_appdata_base = Path(_appdata) / "XHive" if _appdata else Path(r"C:\XHive")
+
+# Production .env: %LOCALAPPDATA%\XHive\worker\.env
+# Fallback .env:   repo/apps/worker/.env
+```
+
+---
+
 # JSON Cookie System - Implementation Summary
 
 ## What Was Built
