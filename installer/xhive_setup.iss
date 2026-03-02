@@ -2,8 +2,8 @@
 ; Inno Setup 6
 ; Kurulum:
 ;   1. XHive.exe -> {pf}\XHive
-;   2. Python worker -> {userappdata}\XHive\worker
-;   3. Kalici veriler -> {userappdata}\XHive\data, cookies, browser_data, locks
+;   2. Python worker -> {localappdata}\XHive\worker
+;   3. Kalici veriler -> {localappdata}\XHive\data, cookies, browser_data, locks
 ;   4. Kurulum sonrasi: Python 3.11 yoksa indir+kur, venv olustur, pip install
 
 #define PythonVersion "3.11.9"
@@ -56,55 +56,94 @@ Name: "desktopicon"; Description: "Masaustu kisayolu olustur"; GroupDescription:
 
 [Dirs]
 ; Kalici veri klasorleri - uygulama ilk acilisinda bunlari kullanir
-Name: "{userappdata}\{#MyAppName}"
-Name: "{userappdata}\{#MyAppName}\data"
-Name: "{userappdata}\{#MyAppName}\locks"
-Name: "{userappdata}\{#MyAppName}\browser_data"
-Name: "{userappdata}\{#MyAppName}\worker"
-Name: "{userappdata}\{#MyAppName}\worker\cookies"
+Name: "{localappdata}\{#MyAppName}"
+Name: "{localappdata}\{#MyAppName}\data"
+Name: "{localappdata}\{#MyAppName}\locks"
+Name: "{localappdata}\{#MyAppName}\browser_data"
+Name: "{localappdata}\{#MyAppName}\worker"
+Name: "{localappdata}\{#MyAppName}\worker\cookies"
 
 [Files]
 ; Ana uygulama exe
 Source: "..\apps\desktop\src-tauri\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
-; Worker dosyalari -> AppData\XHive\worker
-; Temel Python modulleri
-Source: "..\apps\worker\app\*"; DestDir: "{userappdata}\{#MyAppName}\worker\app"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\apps\worker\intel\*"; DestDir: "{userappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\apps\worker\approval\*"; DestDir: "{userappdata}\{#MyAppName}\worker\approval"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\apps\worker\posting\*"; DestDir: "{userappdata}\{#MyAppName}\worker\posting"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\apps\worker\scheduling\*"; DestDir: "{userappdata}\{#MyAppName}\worker\scheduling"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\apps\worker\tools\*"; DestDir: "{userappdata}\{#MyAppName}\worker\tools"; Flags: ignoreversion recursesubdirs createallsubdirs
+; --- ALT PAKET KLASORLERI (recursesubdirs ile tum .py dosyalari, __pycache__ haric) ---
 
-; Kok Python dosyalari (sadece uretimde kullanilan)
-Source: "..\apps\worker\ai_content_generator.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\chrome_pool.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\config.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\content_generator.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\health_check.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\human_behavior.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\lock_manager.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\metrics_collector.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\orchestrator.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\post_scheduler.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\rate_limiter.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\safety_logger.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\structured_logger.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\task_queue.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\telegram_bot.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\x_daemon.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\approval_manager.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\api_server.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\run.py"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
-Source: "..\apps\worker\requirements.txt"; DestDir: "{userappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+; app/ - FastAPI giris noktasi (main.py)
+Source: "..\apps\worker\app\main.py"; DestDir: "{localappdata}\{#MyAppName}\worker\app"; Flags: ignoreversion
+Source: "..\apps\worker\app\__init__.py"; DestDir: "{localappdata}\{#MyAppName}\worker\app"; Flags: ignoreversion
 
-; .env.example -> .env olarak kopyala (varsa uzerine yazma)
-Source: "..\apps\worker\.env.example"; DestDir: "{userappdata}\{#MyAppName}\worker"; DestName: ".env"; Flags: onlyifdoesntexist
+; intel/ - tum kaynak dosyalari (sadece .py)
+Source: "..\apps\worker\intel\aggregator.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\ai_processor.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\arxiv_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\base_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\cookie_loader.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\cookie_manager.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\github_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\google_trends_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\hackernews_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\huggingface_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\perplexity_scraper.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\playwright_helper.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\polymarket_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\producthunt_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\reddit_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\rss_news_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\rss_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\substack_scraper.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\telegram_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\twitter_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\twitter_trends_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\youtube_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\__init__.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
 
-; Cookie sablonlari (bos, kullanicinin doldurmasi icin)
-Source: "..\apps\worker\cookies\.gitkeep"; DestDir: "{userappdata}\{#MyAppName}\worker\cookies"; Flags: ignoreversion
+; approval/ - onay sistemi (.env haric - credentials iceriyor)
+Source: "..\apps\worker\approval\approval_queue.py"; DestDir: "{localappdata}\{#MyAppName}\worker\approval"; Flags: ignoreversion
+Source: "..\apps\worker\approval\telegram_notifier.py"; DestDir: "{localappdata}\{#MyAppName}\worker\approval"; Flags: ignoreversion
 
-; NOT: .venv dahil edilmiyor - kurulum sonrasi otomatik olusturulur
+; posting/ - Twitter poster
+Source: "..\apps\worker\posting\auto_poster.py"; DestDir: "{localappdata}\{#MyAppName}\worker\posting"; Flags: ignoreversion
+Source: "..\apps\worker\posting\twitter_poster.py"; DestDir: "{localappdata}\{#MyAppName}\worker\posting"; Flags: ignoreversion
+
+; scheduling/ - zamanlayici
+Source: "..\apps\worker\scheduling\post_scheduler.py"; DestDir: "{localappdata}\{#MyAppName}\worker\scheduling"; Flags: ignoreversion
+
+; tools/ - yardimci araclar
+Source: "..\apps\worker\tools\cookie_extractor.py"; DestDir: "{localappdata}\{#MyAppName}\worker\tools"; Flags: ignoreversion
+Source: "..\apps\worker\tools\__init__.py"; DestDir: "{localappdata}\{#MyAppName}\worker\tools"; Flags: ignoreversion
+
+; --- KOK PYTHON DOSYALARI (arka plan servisleri + cekirdek) ---
+Source: "..\apps\worker\x_daemon.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\orchestrator.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\task_queue.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\api_server.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\approval_manager.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\telegram_bot.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\run.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\run_approval_bot.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\simple_server.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\chrome_pool.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\config.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\content_generator.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\ai_content_generator.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\health_check.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\human_behavior.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\lock_manager.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\metrics_collector.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\post_scheduler.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\rate_limiter.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\safety_logger.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\structured_logger.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\requirements.txt"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+
+; .env.example -> .env olarak kopyala (varsa uzerine yazma - mevcut .env'i silmez)
+Source: "..\apps\worker\.env.example"; DestDir: "{localappdata}\{#MyAppName}\worker"; DestName: ".env"; Flags: onlyifdoesntexist
+
+; Cookie klasoru - bos baslangic
+Source: "..\apps\worker\cookies\.gitkeep"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: ignoreversion
+
+; NOT: .venv, test_*.py, debug_*.py, *.log, __pycache__ dahil edilmiyor
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
@@ -147,7 +186,7 @@ end;
 
 function VenvExists(): Boolean;
 begin
-  Result := FileExists(ExpandConstant('{userappdata}\{#MyAppName}\worker\.venv\Scripts\python.exe'));
+  Result := FileExists(ExpandConstant('{localappdata}\{#MyAppName}\worker\.venv\Scripts\python.exe'));
 end;
 
 procedure InitializeWizard();
@@ -216,7 +255,7 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    WorkerPath := ExpandConstant('{userappdata}\{#MyAppName}\worker');
+    WorkerPath := ExpandConstant('{localappdata}\{#MyAppName}\worker');
     VenvPath := WorkerPath + '\.venv';
     PythonPath := GetPythonPath();
 
@@ -243,14 +282,23 @@ begin
         Exec(VenvPath + '\Scripts\python.exe',
              '-m pip install -r "' + WorkerPath + '\requirements.txt" --quiet',
              WorkerPath, SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        // Playwright Chromium browser binary kur (pip install sadece wrapper kurar)
+        WizardForm.StatusLabel.Caption := 'Playwright Chromium tarayıcısı kuruluyor...';
+        Exec(VenvPath + '\Scripts\python.exe',
+             '-m playwright install chromium --with-deps',
+             WorkerPath, SW_HIDE, ewWaitUntilTerminated, ResultCode);
       end else
         MsgBox('Python sanal ortamı oluşturulamadı. Uygulamayı ilk açışınızda otomatik tekrar denenecek.', mbInformation, MB_OK);
     end else
     begin
-      // venv var, sadece pip install yap (guncelleme senaryosu)
+      // venv var, sadece pip install + playwright guncelle
       WizardForm.StatusLabel.Caption := 'Python bağımlılıkları güncelleniyor...';
       Exec(VenvPath + '\Scripts\python.exe',
            '-m pip install -r "' + WorkerPath + '\requirements.txt" --quiet',
+           WorkerPath, SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      WizardForm.StatusLabel.Caption := 'Playwright Chromium güncelleniyor...';
+      Exec(VenvPath + '\Scripts\python.exe',
+           '-m playwright install chromium --with-deps',
            WorkerPath, SW_HIDE, ewWaitUntilTerminated, ResultCode);
     end;
   end;
@@ -262,6 +310,6 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     // Sadece worker kod dosyalarini sil, veri klasorlerini birak
-    // {userappdata}\XHive\data, cookies, browser_data korunur
+    // {localappdata}\XHive\data, cookies, browser_data korunur
   end;
 end;

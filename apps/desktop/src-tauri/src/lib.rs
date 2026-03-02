@@ -19,11 +19,11 @@ fn validate_python_has_fastapi(python_path: &str, worker_path: &Path) -> bool {
 }
 
 /// Resolve the worker directory.
-/// Production: %APPDATA%\XHive\worker
+/// Production: %LOCALAPPDATA%\XHive\worker
 /// Dev fallback: <repo>/apps/worker  (CARGO_MANIFEST_DIR based)
 fn resolve_worker_path() -> PathBuf {
     // Production path first
-    if let Ok(appdata) = std::env::var("APPDATA") {
+    if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
         let prod = PathBuf::from(appdata).join("XHive").join("worker");
         if prod.join("app").join("main.py").exists() {
             println!("📁 Worker path (production): {:?}", prod);
