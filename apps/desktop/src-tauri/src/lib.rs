@@ -24,18 +24,29 @@ fn validate_python_has_fastapi(python_path: &str, worker_path: &Path) -> bool {
 fn resolve_worker_path() -> PathBuf {
     // Production path first
     if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
-        let prod = PathBuf::from(appdata).join("XHive").join("worker");
-        if prod.join("app").join("main.py").exists() {
+        let prod = PathBuf::from(&appdata).join("XHive").join("worker");
+        let main_py = prod.join("app").join("main.py");
+        println!("🔍 Checking production path: {:?}", prod);
+        println!("🔍 main.py exists: {}", main_py.exists());
+        if main_py.exists() {
             println!("📁 Worker path (production): {:?}", prod);
             return prod;
         }
+        // main.py yoksa bile worker klasörü varsa production'dayız — installer henüz tamamlanmamış olabilir
+        if prod.exists() {
+            println!("📁 Worker dir exists but main.py missing — using production path anyway: {:?}", prod);
+            return prod;
+        }
+        println!("⚠️ LOCALAPPDATA={}, prod dir does not exist: {:?}", appdata, prod);
+    } else {
+        println!("⚠️ LOCALAPPDATA env var not found!");
     }
     // Dev fallback
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent().unwrap()
         .parent().unwrap()
         .join("worker");
-    println!("📁 Worker path (dev): {:?}", dev);
+    println!("📁 Worker path (dev fallback): {:?}", dev);
     dev
 }
 
@@ -148,15 +159,33 @@ fn start_backend() {
             python_prefix_args.push("app.main".to_string());
 
             println!("🐍 Python executable: {}", python_executable);
+            println!("📁 Worker path: {:?}", worker_path);
             println!("📋 Args: {:?}", python_prefix_args);
 
-            // Write a log file for debugging
+            // Worker path yoksa oluştur
+            if let Err(e) = std::fs::create_dir_all(&worker_path) {
+                eprintln!("❌ Cannot create worker dir {:?}: {}", worker_path, e);
+                return;
+            }
+
+            // Log dosyalarını oluştur — panic yerine graceful hata
             let log_file = worker_path.join("backend_stdout.log");
             let err_file = worker_path.join("backend_stderr.log");
-            let stdout_file = std::fs::File::create(&log_file)
-                .unwrap_or_else(|e| panic!("Cannot create stdout log: {}", e));
-            let stderr_file = std::fs::File::create(&err_file)
-                .unwrap_or_else(|e| panic!("Cannot create stderr log: {}", e));
+
+            let stdout_file = match std::fs::File::create(&log_file) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("❌ Cannot create stdout log {:?}: {}", log_file, e);
+                    return;
+                }
+            };
+            let stderr_file = match std::fs::File::create(&err_file) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("❌ Cannot create stderr log {:?}: {}", err_file, e);
+                    return;
+                }
+            };
 
             match Command::new(&python_executable)
                 .args(&python_prefix_args)
