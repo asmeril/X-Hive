@@ -186,13 +186,12 @@ class XDaemon:
                     )
                     # Continue without Chrome; Twitter operations will fail gracefully
 
-                # Start TaskQueue
+                # Start TaskQueue (non-fatal)
                 try:
                     await self.task_queue.start()
                     logger.info("✅ TaskQueue started")
                 except Exception as e:
-                    logger.error(f"TaskQueue initialization failed: {e}")
-                    raise XDaemonError(f"TaskQueue startup failed: {e}")
+                    logger.warning(f"⚠️ TaskQueue unavailable: {e}\nDaemon will run in limited mode.")
 
                 # Update daemon state
                 self.state.status = "running"

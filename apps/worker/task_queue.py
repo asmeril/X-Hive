@@ -434,16 +434,17 @@ class TaskQueue:
 
         self._running = True
         
-        # START CHROMEPOOL BROWSER (ensure browser is actually running)
+        # START CHROMEPOOL BROWSER (non-fatal — Chrome may not be installed yet)
         if self.chrome_pool and not self.chrome_pool.browser:
             logger.info("🌐 Starting ChromePool browser...")
             try:
                 await self.chrome_pool.initialize()
                 logger.info("✅ ChromePool browser started")
             except Exception as e:
-                logger.error(f"❌ Failed to start ChromePool: {e}")
-                self._running = False
-                raise
+                logger.warning(
+                    f"⚠️ ChromePool unavailable in TaskQueue: {e}\n"
+                    "Task queue will run without Chrome (Twitter tasks will fail gracefully)."
+                )
         
         # Load task history
         await self._load_task_history()
