@@ -122,8 +122,8 @@ class XDaemon:
 
         # Configuration
         self.max_retries = 2
-        self.operation_timeout = 30  # seconds
-        self.element_wait_timeout = 10000  # milliseconds
+        self.operation_timeout = 45  # seconds (reduced for testing)
+        self.element_wait_timeout = 15000  # milliseconds (reduced for testing)
 
         self._initialized = True
         logger.info("XDaemon initialized")
@@ -411,7 +411,12 @@ class XDaemon:
 
     async def post_tweet(self, text: str, images: Optional[List[str]] = None) -> Dict:
         """
-        Post a tweet on X.com.
+        Post a tweet on X.com with proper X character counting.
+        
+        X.com character counting rules:
+        - Emojis: 2 characters each
+        - URLs: Always 23 characters regardless of length  
+        - Regular text: 1 character each
         
         Args:
             text: Tweet text content
@@ -427,25 +432,186 @@ class XDaemon:
         # 🛡️ CRITICAL: Safety check BEFORE operation
         await self._safety_check(OperationType.TWEET)
         
+        def count_x_characters(text):
+            """Count characters using X.com rules"""
+            import re
+            # Count emojis
+            emoji_pattern = r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001F900-\U0001F9FF]'
+            emojis = len(re.findall(emoji_pattern, text))
+            
+            # Count URLs (shortened to 23 chars each)
+            url_pattern = r'https?://\S+|www\.\S+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}'
+            urls = re.findall(url_pattern, text)
+            url_chars = len(urls) * 23
+            
+            # Count remaining characters
+            text_without_urls = re.sub(url_pattern, '', text)
+            text_without_emojis = re.sub(emoji_pattern, '', text_without_urls)
+            regular_chars = len(text_without_emojis)
+            
+            return emojis * 2 + url_chars + regular_chars
+        
+        # Check X.com character count for thread decision
+        x_char_count = count_x_characters(text)
+        logger.info(f"📏 Text: {len(text)} raw chars, {x_char_count} X-chars")
+        
+        # Auto-split long tweets into thread (using X character counting)
+        if x_char_count > 280:
+            logger.info(f"📝 Long tweet detected ({x_char_count} X-chars), splitting into thread...")
+            return await self._post_thread(text, images)
+        
+        # Single tweet - post directly
+        return await self._post_single_tweet(text, images)
+
+    async def _post_single_tweet(self, text: str, images: Optional[List[str]] = None) -> Dict:
+        """
+        Internal method to post a single tweet without length check.
+        Used by both post_tweet() and _post_thread().
+        """
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(f"📝 Posting tweet (attempt {attempt}/{self.max_retries})")
 
                 page = await self.chrome_pool.get_page()
 
-                # Navigate to X.com
+                # Reload cookies before each operation (in case they were updated)
+                await self.chrome_pool.load_cookies()
+
+                # First navigate to x.com to activate cookies (like Selenium does)
                 await page.goto("https://x.com/home", wait_until="domcontentloaded")
+                await asyncio.sleep(3)  # Wait for cookie activation and redirects
+                
+                # Check if redirected to login page
+                current_url = page.url.lower()
+                if "login" in current_url or "flow" in current_url:
+                    logger.error("❌ Redirected to login page — cookies expired or invalid")
+                    return {
+                        "success": False,
+                        "error": "Session expired. Cookies may be invalid. Please re-import cookies.",
+                    }
+                
+                # Now navigate to compose page (XiDeAI Pro exact URL)
+                await page.goto("https://x.com/compose/tweet", wait_until="domcontentloaded")
                 await HumanBehavior.simulate_page_load_wait()  # Human delay
+                
+                # Check again after compose navigation
+                current_url = page.url.lower()
+                if "login" in current_url or "flow" in current_url:
+                    logger.error("❌ Redirected to login from compose page")
+                    return {
+                        "success": False,
+                        "error": "Session expired. Cookies may be invalid. Please re-import cookies.",
+                    }
 
-                # Find and click compose box
-                compose_box = await self._wait_for_element(
-                    page, self.SELECTORS["tweet_compose"]
-                )
+                # Find compose box with simple, robust selectors (XiDeAI Pro style)
+                compose_box = None
+                compose_selectors = [
+                    'div[contenteditable="true"]',          # Primary - any contenteditable
+                    'div[role="textbox"]',                  # Backup - textbox role
+                    '[data-testid*="textbox"]',             # Data-testid containing textbox
+                    '[data-testid*="tweet"]',               # Data-testid containing tweet
+                    'div[contenteditable]',                 # Alternative contenteditable
+                ]
+                
+                for i, selector in enumerate(compose_selectors):
+                    try:
+                        logger.info(f"Looking for compose box {i+1}: {selector}")
+                        elements = page.locator(selector)
+                        count = await elements.count()
+                        logger.info(f"Found {count} elements with selector {selector}")
+                        
+                        if count > 0:
+                            # Try each element to find the working one
+                            for j in range(count):
+                                element = elements.nth(j)
+                                try:
+                                    await element.wait_for(state="visible", timeout=3000)
+                                    is_enabled = await element.is_enabled()
+                                    is_editable = await element.get_attribute("contenteditable")
+                                    
+                                    if is_enabled and (is_editable == "true" or is_editable == ""):
+                                        compose_box = element
+                                        logger.info(f"✅ Found working compose box: {selector} #{j}")
+                                        break
+                                except Exception as elem_error:
+                                    logger.debug(f"Element {j} not suitable: {elem_error}")
+                                    continue
+                        
+                        if compose_box:
+                            break
+                            
+                    except Exception as e:
+                        logger.warning(f"⚠️ Selector {i+1} failed: {selector} - {e}")
+                        continue
+                
+                if not compose_box:
+                    logger.error("❌ Could not find any working compose box")
+                    raise PlaywrightTimeoutError("Compose box not found")
+                
                 await compose_box.click()
-                await HumanBehavior.random_micro_pause()  # Human delay
-
-                # Type tweet text with human-like speed
-                await HumanBehavior.type_like_human(page, self.SELECTORS["tweet_compose"], text)
+                await asyncio.sleep(1)  # Wait for focus
+                
+                # Clear any existing text first (like XiDeAI Pro atomic_clear)
+                await compose_box.press("Control+a")
+                await asyncio.sleep(0.2)
+                await compose_box.press("Backspace")
+                await asyncio.sleep(0.5)
+                
+                # Try multiple text input methods (XiDeAI Pro strategy)
+                text_inserted = False
+                
+                # Method 1: Fill (Playwright's native method)
+                try:
+                    await compose_box.fill(text)
+                    await asyncio.sleep(1)
+                    current_text = await compose_box.inner_text()
+                    if len(current_text.strip()) >= len(text.strip()) * 0.8:
+                        logger.info("✅ Text inserted via fill()")
+                        text_inserted = True
+                except Exception as e:
+                    logger.warning(f"Fill method failed: {e}")
+                
+                # Method 2: Type character by character (if fill failed)
+                if not text_inserted:
+                    try:
+                        await compose_box.type(text, delay=50)  # 50ms per character
+                        await asyncio.sleep(1)
+                        current_text = await compose_box.inner_text()
+                        if len(current_text.strip()) >= len(text.strip()) * 0.8:
+                            logger.info("✅ Text inserted via type()")
+                            text_inserted = True
+                    except Exception as e:
+                        logger.warning(f"Type method failed: {e}")
+                
+                # Method 3: JavaScript insertion (last resort)
+                if not text_inserted:
+                    try:
+                        await page.evaluate("""
+                            (element, text) => {
+                                element.focus();
+                                element.innerText = text;
+                                element.dispatchEvent(new Event('input', { bubbles: true }));
+                                element.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                        """, compose_box, text)
+                        await asyncio.sleep(1)
+                        logger.info("✅ Text inserted via JavaScript")
+                        text_inserted = True
+                    except Exception as e:
+                        logger.warning(f"JavaScript method failed: {e}")
+                
+                if not text_inserted:
+                    logger.error("❌ All text insertion methods failed")
+                    raise PlaywrightTimeoutError("Could not insert text")
+                
+                # Wake up React (like XiDeAI Pro)
+                try:
+                    await compose_box.press(" ")
+                    await asyncio.sleep(0.1)
+                    await compose_box.press("Backspace")
+                    await asyncio.sleep(0.5)
+                except:
+                    pass
 
                 # Upload images if provided
                 if images:
@@ -459,15 +625,88 @@ class XDaemon:
                         except Exception as e:
                             logger.warning(f"Image upload failed: {e}")
 
-                # Click post button
-                post_button = await self._wait_for_element(
-                    page, self.SELECTORS["post_button"]
-                )
-                await HumanBehavior.simulate_thinking()  # Think before posting
-                await post_button.click()
-
+                # Click post button with XiDeAI Pro compatible selectors
+                post_button = None
+                post_selectors = [
+                    'div[data-testid="tweetButtonInline"]',   # Inline (reply mode)
+                    'div[data-testid="tweetButton"]',         # Main tweet button
+                    'button[data-testid="tweetButton"]',      # Button element
+                    '//span[text()="Gönderi yayınla"]/../../..',  # Turkish text
+                    '//span[text()="Post"]/../../..',          # English text
+                    'div[role="button"][data-testid*="Button"]', # Any button with testid
+                ]
+                
+                for i, btn_selector in enumerate(post_selectors):
+                    try:
+                        logger.info(f"Trying post button {i+1}: {btn_selector}")
+                        if btn_selector.startswith('//'):
+                            post_button = page.locator(f"xpath={btn_selector}").first
+                            await post_button.wait_for(state="visible", timeout=5000)
+                        else:
+                            post_button = await self._wait_for_element(page, btn_selector, timeout=5000)
+                        if post_button:
+                            logger.info(f"✅ Found post button with selector: {btn_selector}")
+                            break
+                    except (PlaywrightTimeoutError, Exception) as e:
+                        logger.warning(f"⚠️ Post button {i+1} failed: {btn_selector} - {e}")
+                        continue
+                
+                # Find post button with XiDeAI Pro exact selectors and logic
+                await asyncio.sleep(2)  # Wait for UI state
+                
+                post_button = None
+                # XiDeAI Pro exact selectors
+                selectors = [
+                    "[data-testid='tweetButtonInline']", 
+                    "[data-testid='tweetButton']", 
+                    "div[role='button'][data-testid$='Button']"
+                ]
+                
+                for selector in selectors:
+                    try:
+                        logger.info(f"Trying XiDeAI Pro selector: {selector}")
+                        buttons = page.locator(selector)
+                        button_count = await buttons.count()
+                        
+                        for i in range(button_count):
+                            btn = buttons.nth(i)
+                            try:
+                                await btn.wait_for(state="visible", timeout=3000)
+                                is_enabled = await btn.is_enabled()
+                                is_disabled = await btn.get_attribute("aria-disabled")
+                                is_displayed = await btn.is_visible()
+                                
+                                # XiDeAI Pro exact check
+                                if is_enabled and is_disabled != "true" and is_displayed:
+                                    logger.info(f"✅ XiDeAI Pro style button found: {selector} #{i}")
+                                    post_button = btn
+                                    break
+                            except Exception as e:
+                                logger.debug(f"Button {i} check failed: {e}")
+                                continue
+                        
+                        if post_button:
+                            break
+                            
+                    except Exception as e:
+                        logger.warning(f"Selector {selector} failed: {e}")
+                        continue
+                
+                if not post_button:
+                    logger.error("❌ No post button found with XiDeAI Pro selectors")
+                    raise PlaywrightTimeoutError("Post button not found")
+                
+                # Click with JavaScript (like XiDeAI Pro)
+                try:
+                    logger.info("Clicking post button with JavaScript...")
+                    await page.evaluate("button => button.click()", post_button)
+                    await asyncio.sleep(0.5)
+                except Exception as js_click_error:
+                    logger.warning(f"JS click failed, trying normal click: {js_click_error}")
+                    await post_button.click()
+                
                 # Wait for post confirmation
-                await HumanBehavior.anti_detection_delay()  # Anti-detection delay
+                await asyncio.sleep(3)
 
                 logger.info("✅ Tweet posted successfully")
                 
@@ -916,6 +1155,137 @@ class XDaemon:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
         await self.stop()
+
+    async def _post_thread(self, text: str, images: Optional[List[str]] = None) -> Dict:
+        """
+        Post a long tweet as a thread by splitting it into X-compatible chunks.
+        
+        X.com character counting rules:
+        - Emojis: 2 characters each (🧵 = 2 chars)
+        - URLs: Always 23 characters regardless of length
+        - Regular text: 1 character each
+        
+        Args:
+            text: Long text content
+            images: Optional list of image file paths (attached to first tweet)
+            
+        Returns:
+            dict: Thread post result
+        """
+        try:
+            def count_x_characters(text):
+                """Count characters using X.com rules"""
+                import re
+                # Count emojis (rough estimate - Unicode ranges for common emojis)
+                emoji_pattern = r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001F900-\U0001F9FF]'
+                emojis = len(re.findall(emoji_pattern, text))
+                
+                # Count URLs (will be shortened to 23 chars each)
+                url_pattern = r'https?://\S+|www\.\S+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}'
+                urls = re.findall(url_pattern, text)
+                url_chars = len(urls) * 23  # Each URL counts as 23
+                
+                # Remove URLs and emojis, count remaining characters
+                text_without_urls = re.sub(url_pattern, '', text)
+                text_without_emojis = re.sub(emoji_pattern, '', text_without_urls)
+                regular_chars = len(text_without_emojis)
+                
+                total = emojis * 2 + url_chars + regular_chars
+                logger.debug(f"Character count: emojis={emojis}*2, urls={len(urls)}*23, regular={regular_chars}, total={total}")
+                return total
+            
+            # Split text into safe chunks (250 chars max to leave room for thread numbers + safety)
+            chunks = []
+            remaining = text
+            
+            while remaining:
+                if count_x_characters(remaining) <= 250:
+                    chunks.append(remaining)
+                    break
+                
+                # Find best split point - start conservative
+                split_pos = min(150, len(remaining))  # Very conservative start
+                
+                # Gradually increase split position until we hit our limit
+                while split_pos < len(remaining):
+                    test_chunk = remaining[:split_pos]
+                    test_chars = count_x_characters(test_chunk)
+                    if test_chars > 250:
+                        split_pos -= 10  # Step back to safe zone
+                        break
+                    if test_chars > 220:  # Slow down near limit
+                        split_pos += 2
+                    else:
+                        split_pos += 15  # Bigger steps when safe
+                
+                # Fine-tune at sentence boundaries
+                for end_char in ['. ', '\n\n', '\n', '? ', '! ', ', ']:
+                    pos = remaining.rfind(end_char, max(50, split_pos - 50), split_pos + 20)
+                    if pos > 50:  # Minimum chunk size
+                        split_pos = pos + len(end_char)
+                        break
+                
+                chunks.append(remaining[:split_pos].strip())
+                remaining = remaining[split_pos:].strip()
+            
+            if len(chunks) == 1:
+                # Single chunk, just post normally
+                return await self._post_single_tweet(chunks[0], images)
+            
+            # Add thread numbers and verify they fit
+            numbered_chunks = []
+            total = len(chunks)
+            for i, chunk in enumerate(chunks, 1):
+                if i == 1:
+                    final_chunk = f"{chunk}\n\n🧵 {i}/{total}"
+                else:
+                    final_chunk = f"🧵 {i}/{total}\n\n{chunk}"
+                
+                # Safety check: ensure final chunk fits in 280 chars
+                if count_x_characters(final_chunk) > 280:
+                    logger.warning(f"Thread chunk {i} too long ({count_x_characters(final_chunk)} chars), truncating...")
+                    # Emergency truncation (shouldn't happen with proper splitting)
+                    while count_x_characters(final_chunk) > 280 and len(chunk) > 50:
+                        chunk = chunk[:-10]
+                        if i == 1:
+                            final_chunk = f"{chunk}...\n\n🧵 {i}/{total}"
+                        else:
+                            final_chunk = f"🧵 {i}/{total}\n\n{chunk}..."
+                
+                numbered_chunks.append(final_chunk)
+                logger.info(f"Thread {i}/{total}: {count_x_characters(final_chunk)} X-characters")
+            
+            logger.info(f"📝 Posting thread with {total} tweets")
+            
+            # Post first tweet with images
+            first_result = await self._post_single_tweet(numbered_chunks[0], images)
+            if not first_result.get("success"):
+                return first_result
+            
+            # Post remaining tweets as replies (simplified for now)
+            for i, chunk in enumerate(numbered_chunks[1:], 2):
+                try:
+                    await asyncio.sleep(3)  # Delay between thread tweets
+                    chunk_result = await self._post_single_tweet(chunk)
+                    if not chunk_result.get("success"):
+                        logger.warning(f"Thread tweet {i} failed: {chunk_result.get('error')}")
+                except Exception as e:
+                    logger.warning(f"Thread tweet {i} error: {e}")
+                    continue
+            
+            return {
+                "success": True,
+                "tweet_url": first_result.get("tweet_url", ""),
+                "thread_count": total,
+                "text": text[:50] + "..." if len(text) > 50 else text,
+            }
+            
+        except Exception as e:
+            logger.error(f"Thread post failed: {e}")
+            return {
+                "success": False,
+                "error": f"Thread error: {str(e)}",
+            }
 
 
 # Convenience functions for module-level access

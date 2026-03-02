@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface DaemonStatus {
@@ -34,6 +34,7 @@ const XDaemonMonitor: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [autoStartTried, setAutoStartTried] = useState(false);
+  const userStoppedRef = useRef(false);
 
   const fetchStatus = async () => {
     try {
@@ -69,7 +70,7 @@ const XDaemonMonitor: React.FC = () => {
       setStatus(daemonStatus);
       setError(null);
 
-      if (daemonStatus.status !== "running" && !autoStartTried) {
+      if (daemonStatus.status !== "running" && !autoStartTried && !userStoppedRef.current) {
         setAutoStartTried(true);
         await invoke<string>("call_worker_api", {
           method: "POST",
@@ -113,6 +114,7 @@ const XDaemonMonitor: React.FC = () => {
 
   const startDaemon = async () => {
     try {
+      userStoppedRef.current = false;
       await invoke<string>("call_worker_api", {
         method: "POST",
         endpoint: "/daemon/start",
@@ -125,6 +127,7 @@ const XDaemonMonitor: React.FC = () => {
 
   const stopDaemon = async () => {
     try {
+      userStoppedRef.current = true;
       await invoke<string>("call_worker_api", {
         method: "POST",
         endpoint: "/daemon/stop",
@@ -137,6 +140,7 @@ const XDaemonMonitor: React.FC = () => {
 
   const restartDaemon = async () => {
     try {
+      userStoppedRef.current = false;
       await invoke<string>("call_worker_api", {
         method: "POST",
         endpoint: "/daemon/restart",
@@ -317,7 +321,7 @@ const XDaemonMonitor: React.FC = () => {
           <div style={{ display: "flex", gap: "12px" }}>
             <button
               onClick={startDaemon}
-              disabled={loading || status?.status === "running"}
+              disabled={status?.status === "running"}
               style={{
                 flex: 1,
                 padding: "12px 24px",
@@ -334,7 +338,7 @@ const XDaemonMonitor: React.FC = () => {
             </button>
             <button
               onClick={stopDaemon}
-              disabled={loading || status?.status !== "running"}
+              disabled={status?.status !== "running"}
               style={{
                 flex: 1,
                 padding: "12px 24px",
@@ -351,15 +355,14 @@ const XDaemonMonitor: React.FC = () => {
             </button>
             <button
               onClick={restartDaemon}
-              disabled={loading}
               style={{
                 flex: 1,
                 padding: "12px 24px",
                 borderRadius: "8px",
                 border: "none",
-                backgroundColor: loading ? "#374151" : "#f59e0b",
+                backgroundColor: "#f59e0b",
                 color: "white",
-                cursor: loading ? "not-allowed" : "pointer",
+                cursor: "pointer",
                 fontSize: "16px",
                 fontWeight: "600"
               }}

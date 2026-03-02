@@ -236,7 +236,7 @@ function App() {
                   color: "#94a3b8",
                   fontSize: "14px"
                 }}>
-                  Worker kilidi al, bırak veya durumunu kontrol et
+                  Daemon oturum kilidini al, bırak veya durumunu kontrol et
                 </p>
                 <div style={{ display: "flex", gap: "12px" }}>
                   <button

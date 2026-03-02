@@ -20,13 +20,18 @@ const XOperations: React.FC = () => {
     setLoading(true);
     setMessage(null);
     try {
-      await invoke<string>("call_worker_api", {
+      const response = await invoke<string>("call_worker_api", {
         method: "POST",
-        endpoint: "/operations/post",
+        endpoint: "/x/post",
         body: JSON.stringify({ text: tweetText }),
       });
-      setMessage({ type: "success", text: "Tweet gönderildi!" });
-      setTweetText("");
+      const result = JSON.parse(response);
+      if (result.success === false) {
+        setMessage({ type: "error", text: result.error || "Tweet gönderilemedi" });
+      } else {
+        setMessage({ type: "success", text: `Tweet gönderildi! ${result.tweet_url || ""}` });
+        setTweetText("");
+      }
     } catch (e: any) {
       setMessage({ type: "error", text: e.message || "Hata oluştu" });
     } finally {
@@ -36,20 +41,25 @@ const XOperations: React.FC = () => {
 
   const handleReply = async () => {
     if (!tweetText.trim() || !tweetId.trim()) {
-      setMessage({ type: "error", text: "Tweet ID ve metin gerekli" });
+      setMessage({ type: "error", text: "Tweet URL ve metin gerekli" });
       return;
     }
     setLoading(true);
     setMessage(null);
     try {
-      await invoke<string>("call_worker_api", {
+      const response = await invoke<string>("call_worker_api", {
         method: "POST",
-        endpoint: "/operations/reply",
-        body: JSON.stringify({ tweet_id: tweetId, text: tweetText }),
+        endpoint: "/x/reply",
+        body: JSON.stringify({ tweet_url: tweetId, text: tweetText }),
       });
-      setMessage({ type: "success", text: "Yanıt gönderildi!" });
-      setTweetText("");
-      setTweetId("");
+      const result = JSON.parse(response);
+      if (result.success === false) {
+        setMessage({ type: "error", text: result.error || "Yanıt gönderilemedi" });
+      } else {
+        setMessage({ type: "success", text: "Yanıt gönderildi!" });
+        setTweetText("");
+        setTweetId("");
+      }
     } catch (e: any) {
       setMessage({ type: "error", text: e.message || "Hata oluştu" });
     } finally {
@@ -59,20 +69,25 @@ const XOperations: React.FC = () => {
 
   const handleQuote = async () => {
     if (!tweetText.trim() || !tweetId.trim()) {
-      setMessage({ type: "error", text: "Tweet ID ve metin gerekli" });
+      setMessage({ type: "error", text: "Tweet URL ve metin gerekli" });
       return;
     }
     setLoading(true);
     setMessage(null);
     try {
-      await invoke<string>("call_worker_api", {
+      const response = await invoke<string>("call_worker_api", {
         method: "POST",
-        endpoint: "/operations/quote",
-        body: JSON.stringify({ tweet_id: tweetId, text: tweetText }),
+        endpoint: "/x/quote",
+        body: JSON.stringify({ tweet_url: tweetId, text: tweetText }),
       });
-      setMessage({ type: "success", text: "Alıntı gönderildi!" });
-      setTweetText("");
-      setTweetId("");
+      const result = JSON.parse(response);
+      if (result.success === false) {
+        setMessage({ type: "error", text: result.error || "Alıntı gönderilemedi" });
+      } else {
+        setMessage({ type: "success", text: "Alıntı gönderildi!" });
+        setTweetText("");
+        setTweetId("");
+      }
     } catch (e: any) {
       setMessage({ type: "error", text: e.message || "Hata oluştu" });
     } finally {
@@ -82,18 +97,24 @@ const XOperations: React.FC = () => {
 
   const handleLike = async () => {
     if (!tweetId.trim()) {
-      setMessage({ type: "error", text: "Tweet ID gerekli" });
+      setMessage({ type: "error", text: "Tweet URL gerekli" });
       return;
     }
     setLoading(true);
     setMessage(null);
     try {
-      await invoke<string>("call_worker_api", {
+      const response = await invoke<string>("call_worker_api", {
         method: "POST",
-        endpoint: `/operations/like/${tweetId}`,
+        endpoint: "/x/like",
+        body: JSON.stringify({ tweet_url: tweetId }),
       });
-      setMessage({ type: "success", text: "Tweet beğenildi!" });
-      setTweetId("");
+      const result = JSON.parse(response);
+      if (result.success === false) {
+        setMessage({ type: "error", text: result.error || "Beğenme başarısız" });
+      } else {
+        setMessage({ type: "success", text: "Tweet beğenildi!" });
+        setTweetId("");
+      }
     } catch (e: any) {
       setMessage({ type: "error", text: e.message || "Hata oluştu" });
     } finally {
@@ -103,18 +124,24 @@ const XOperations: React.FC = () => {
 
   const handleRetweet = async () => {
     if (!tweetId.trim()) {
-      setMessage({ type: "error", text: "Tweet ID gerekli" });
+      setMessage({ type: "error", text: "Tweet URL gerekli" });
       return;
     }
     setLoading(true);
     setMessage(null);
     try {
-      await invoke<string>("call_worker_api", {
+      const response = await invoke<string>("call_worker_api", {
         method: "POST",
-        endpoint: `/operations/retweet/${tweetId}`,
+        endpoint: "/x/retweet",
+        body: JSON.stringify({ tweet_url: tweetId }),
       });
-      setMessage({ type: "success", text: "Retweet yapıldı!" });
-      setTweetId("");
+      const result = JSON.parse(response);
+      if (result.success === false) {
+        setMessage({ type: "error", text: result.error || "Retweet başarısız" });
+      } else {
+        setMessage({ type: "success", text: "Retweet yapıldı!" });
+        setTweetId("");
+      }
     } catch (e: any) {
       setMessage({ type: "error", text: e.message || "Hata oluştu" });
     } finally {
@@ -248,7 +275,7 @@ const XOperations: React.FC = () => {
                 type="text"
                 value={tweetId}
                 onChange={(e) => setTweetId(e.target.value)}
-                placeholder="Tweet ID"
+                placeholder="Tweet URL (örn: https://x.com/user/status/123)"
                 style={{
                   width: "100%",
                   padding: "12px",
@@ -316,7 +343,7 @@ const XOperations: React.FC = () => {
                 type="text"
                 value={tweetId}
                 onChange={(e) => setTweetId(e.target.value)}
-                placeholder="Tweet ID"
+                placeholder="Tweet URL (örn: https://x.com/user/status/123)"
                 style={{
                   width: "100%",
                   padding: "12px",
@@ -384,7 +411,7 @@ const XOperations: React.FC = () => {
                 type="text"
                 value={tweetId}
                 onChange={(e) => setTweetId(e.target.value)}
-                placeholder="Tweet ID"
+                placeholder="Tweet URL (örn: https://x.com/user/status/123)"
                 style={{
                   width: "100%",
                   padding: "12px",
@@ -426,7 +453,7 @@ const XOperations: React.FC = () => {
                 type="text"
                 value={tweetId}
                 onChange={(e) => setTweetId(e.target.value)}
-                placeholder="Tweet ID"
+                placeholder="Tweet URL (örn: https://x.com/user/status/123)"
                 style={{
                   width: "100%",
                   padding: "12px",

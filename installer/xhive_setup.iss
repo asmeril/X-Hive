@@ -144,8 +144,21 @@ Source: "..\apps\worker\requirements.txt"; DestDir: "{localappdata}\{#MyAppName}
 ; .env.example -> .env olarak kopyala (varsa uzerine yazma - mevcut .env'i silmez)
 Source: "..\apps\worker\.env.example"; DestDir: "{localappdata}\{#MyAppName}\worker"; DestName: ".env"; Flags: onlyifdoesntexist
 
-; Cookie klasoru - bos baslangic
+; Cookie dosyalari (mevcut olanin uzerine yazmaz - kullanicinin kendi cookie'leri korunur)
 Source: "..\apps\worker\cookies\.gitkeep"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: ignoreversion
+Source: "..\apps\worker\cookies\twitter.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\github.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\reddit.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\linkedin.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\medium.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\substack.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\youtube.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\discord.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\arxiv.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\google_trends.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\huggingface.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\perplexity.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\producthunt.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
 
 ; NOT: .venv, test_*.py, debug_*.py, *.log, __pycache__ dahil edilmiyor
 

@@ -287,13 +287,22 @@ async fn check_worker_health() -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn call_worker_api(method: String, endpoint: String) -> Result<String, String> {
+async fn call_worker_api(method: String, endpoint: String, body: Option<String>) -> Result<String, String> {
     let url = format!("http://127.0.0.1:8765{}", endpoint);
     let client = reqwest::Client::new();
 
     let response = match method.as_str() {
         "GET" => client.get(&url).send().await,
-        "POST" => client.post(&url).send().await,
+        "POST" => {
+            let req = client.post(&url);
+            if let Some(ref json_body) = body {
+                req.header("Content-Type", "application/json")
+                   .body(json_body.clone())
+                   .send().await
+            } else {
+                req.send().await
+            }
+        }
         _ => return Err("Unsupported method".to_string()),
     };
 

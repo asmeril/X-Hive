@@ -724,6 +724,42 @@ async def lock_status():
     }
 
 
+@app.post("/lock/acquire")
+async def lock_acquire():
+    """Acquire session lock"""
+    lock_manager = LockManager(lock_path=str(settings.LOCK_PATH))
+    try:
+        acquired = lock_manager.acquire_lock()
+        return {
+            "status": "ok",
+            "acquired": acquired,
+            "lock_path": str(settings.LOCK_PATH)
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.post("/lock/release")
+async def lock_release():
+    """Release session lock"""
+    lock_manager = LockManager(lock_path=str(settings.LOCK_PATH))
+    try:
+        released = lock_manager.release_lock()
+        return {
+            "status": "ok",
+            "released": released,
+            "lock_path": str(settings.LOCK_PATH)
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=settings.WORKER_PORT)

@@ -109,11 +109,21 @@ class ChromePool:
                     # Create persistent user data directory
                     self.user_data_dir.mkdir(parents=True, exist_ok=True)
 
-                    # Launch browser
-                    self.browser = await self._playwright.chromium.launch(
-                        headless=self.headless,
-                        args=self.launch_args,
-                    )
+                    # Launch browser — prefer real Chrome for anti-detection
+                    # channel="chrome" uses installed Chrome instead of Playwright's Chromium
+                    try:
+                        self.browser = await self._playwright.chromium.launch(
+                            headless=self.headless,
+                            channel="chrome",
+                            args=self.launch_args,
+                        )
+                        logger.info("✅ Using real Chrome browser (better anti-detection)")
+                    except Exception as chrome_err:
+                        logger.warning(f"Real Chrome not available, falling back to Chromium: {chrome_err}")
+                        self.browser = await self._playwright.chromium.launch(
+                            headless=self.headless,
+                            args=self.launch_args,
+                        )
 
                     # STEALTH MODE: Random User-Agent and viewport
                     user_agent = HumanBehavior.get_random_user_agent()
@@ -266,17 +276,22 @@ class ChromePool:
             playwright_cookies = []
             for c in raw_cookies:
                 # Chrome extension export uses 'expirationDate' (float), Playwright uses 'expires' (int)
+                domain = c["domain"]
+                # CRITICAL: Normalize domain — Playwright needs .x.com for subdomain matching
+                if domain and not domain.startswith(".") and "." in domain:
+                    domain = "." + domain
+                
                 cookie: Dict[str, Any] = {
                     "name": c["name"],
                     "value": c["value"],
-                    "domain": c["domain"],
+                    "domain": domain,
                     "path": c.get("path", "/"),
-                    "secure": c.get("secure", False),
+                    "secure": c.get("secure", True),  # X.com cookies must be secure
                     "httpOnly": c.get("httpOnly", False),
                 }
-                # Handle expiration
+                # Handle expiration — skip session cookies (expires=-1 or 0)
                 exp = c.get("expirationDate") or c.get("expires")
-                if exp is not None:
+                if exp is not None and int(exp) > 0:
                     cookie["expires"] = int(exp)
                 # sameSite: Playwright accepts 'Strict', 'Lax', 'None'
                 same_site = c.get("sameSite", "None")
@@ -288,10 +303,24 @@ class ChromePool:
                     cookie["sameSite"] = "Strict"
                 else:
                     cookie["sameSite"] = "None"
+                
+                # CRITICAL: SameSite=None requires Secure=True (browser spec)
+                if cookie["sameSite"] == "None":
+                    cookie["secure"] = True
                 playwright_cookies.append(cookie)
 
             await self.context.add_cookies(playwright_cookies)
-            logger.info(f"Loaded {len(playwright_cookies)} cookies from {self.cookie_path}")
+            
+            # Verify: log critical cookies
+            critical_names = {"auth_token", "ct0", "twid"}
+            loaded_critical = [c for c in playwright_cookies if c["name"] in critical_names]
+            for c in loaded_critical:
+                logger.info(f"  🔑 {c['name']}: domain={c['domain']}, secure={c.get('secure')}, sameSite={c.get('sameSite')}")
+            
+            if not loaded_critical:
+                logger.warning("⚠️ No critical cookies (auth_token, ct0, twid) found!")
+            
+            logger.info(f"✅ Loaded {len(playwright_cookies)} cookies from {self.cookie_path}")
 
         except Exception as e:
             logger.error(f"Failed to load cookies: {e}")
