@@ -3,9 +3,33 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 use std::path::{Path, PathBuf};
+use std::io::Write;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+
+/// Write a debug message to %LOCALAPPDATA%\XHive\tauri_debug.log
+/// This is essential because GUI apps have no visible stdout/stderr.
+fn debug_log(msg: &str) {
+    let log_path = if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+        let dir = PathBuf::from(&appdata).join("XHive");
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join("tauri_debug.log")
+    } else {
+        PathBuf::from("tauri_debug.log")
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let _ = writeln!(file, "[{}] {}", timestamp, msg);
+    }
+}
 
 fn validate_python_has_fastapi(python_path: &str, worker_path: &Path) -> bool {
     Command::new(python_path)
@@ -26,27 +50,27 @@ fn resolve_worker_path() -> PathBuf {
     if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
         let prod = PathBuf::from(&appdata).join("XHive").join("worker");
         let main_py = prod.join("app").join("main.py");
-        println!("🔍 Checking production path: {:?}", prod);
-        println!("🔍 main.py exists: {}", main_py.exists());
+        debug_log(&format!("Checking production path: {:?}", prod));
+        debug_log(&format!("main.py exists: {}", main_py.exists()));
         if main_py.exists() {
-            println!("📁 Worker path (production): {:?}", prod);
+            debug_log(&format!("Worker path (production): {:?}", prod));
             return prod;
         }
-        // main.py yoksa bile worker klasörü varsa production'dayız — installer henüz tamamlanmamış olabilir
+        // main.py yoksa bile worker klasörü varsa production'dayız
         if prod.exists() {
-            println!("📁 Worker dir exists but main.py missing — using production path anyway: {:?}", prod);
+            debug_log(&format!("Worker dir exists but main.py missing — using production path anyway: {:?}", prod));
             return prod;
         }
-        println!("⚠️ LOCALAPPDATA={}, prod dir does not exist: {:?}", appdata, prod);
+        debug_log(&format!("LOCALAPPDATA={}, prod dir does not exist: {:?}", appdata, prod));
     } else {
-        println!("⚠️ LOCALAPPDATA env var not found!");
+        debug_log("LOCALAPPDATA env var not found!");
     }
     // Dev fallback
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent().unwrap()
         .parent().unwrap()
         .join("worker");
-    println!("📁 Worker path (dev fallback): {:?}", dev);
+    debug_log(&format!("Worker path (dev fallback): {:?}", dev));
     dev
 }
 
@@ -57,10 +81,10 @@ fn resolve_python_executable(worker_path: &Path) -> (String, Vec<String>) {
         if venv_python.exists() {
             let path_str = venv_python.to_string_lossy().to_string();
             if validate_python_has_fastapi(&path_str, worker_path) {
-                println!("✅ Found working Python venv: {}", path_str);
+                debug_log(&format!("Found working Python venv: {}", path_str));
                 return (path_str, vec![]);
             } else {
-                println!("⚠️ Python venv {} exists but fastapi not installed, skipping", venv_dir);
+                debug_log(&format!("Python venv {} exists but fastapi not installed, skipping", venv_dir));
             }
         }
     }
@@ -76,7 +100,7 @@ fn resolve_python_executable(worker_path: &Path) -> (String, Vec<String>) {
                     let candidate = entry.path().join("python.exe");
                     if candidate.exists() {
                         let path_str = candidate.to_string_lossy().to_string();
-                        println!("🔍 Found system Python: {}", path_str);
+                        debug_log(&format!("Found system Python: {}", path_str));
                         return (path_str, vec![]);
                     }
                 }
@@ -142,12 +166,12 @@ fn start_backend() {
         let check = reqwest::blocking::get("http://127.0.0.1:8765/health");
         if let Ok(resp) = check {
             if resp.status().is_success() {
-                println!("✅ Backend already running");
+                debug_log("Backend already running");
                 return;
             }
         }
 
-        println!("🚀 Starting X-HIVE Backend...");
+        debug_log("Starting X-HIVE Backend...");
 
         // Resolve worker directory (production: AppData, dev: repo)
         let worker_path = resolve_worker_path();
@@ -158,13 +182,13 @@ fn start_backend() {
             python_prefix_args.push("-m".to_string());
             python_prefix_args.push("app.main".to_string());
 
-            println!("🐍 Python executable: {}", python_executable);
-            println!("📁 Worker path: {:?}", worker_path);
-            println!("📋 Args: {:?}", python_prefix_args);
+            debug_log(&format!("Python executable: {}", python_executable));
+            debug_log(&format!("Worker path: {:?}", worker_path));
+            debug_log(&format!("Args: {:?}", python_prefix_args));
 
             // Worker path yoksa oluştur
             if let Err(e) = std::fs::create_dir_all(&worker_path) {
-                eprintln!("❌ Cannot create worker dir {:?}: {}", worker_path, e);
+                debug_log(&format!("Cannot create worker dir {:?}: {}", worker_path, e));
                 return;
             }
 
@@ -175,14 +199,14 @@ fn start_backend() {
             let stdout_file = match std::fs::File::create(&log_file) {
                 Ok(f) => f,
                 Err(e) => {
-                    eprintln!("❌ Cannot create stdout log {:?}: {}", log_file, e);
+                    debug_log(&format!("Cannot create stdout log {:?}: {}", log_file, e));
                     return;
                 }
             };
             let stderr_file = match std::fs::File::create(&err_file) {
                 Ok(f) => f,
                 Err(e) => {
-                    eprintln!("❌ Cannot create stderr log {:?}: {}", err_file, e);
+                    debug_log(&format!("Cannot create stderr log {:?}: {}", err_file, e));
                     return;
                 }
             };
@@ -199,9 +223,9 @@ fn start_backend() {
                 .stderr(stderr_file)
                 .spawn()
             {
-                Ok(child) => println!("✅ Backend process spawned with PID: {}", child.id()),
+                Ok(child) => debug_log(&format!("Backend process spawned with PID: {}", child.id())),
                 Err(e) => {
-                    eprintln!("❌ Failed to spawn backend: {}", e);
+                    debug_log(&format!("Failed to spawn backend: {}", e));
                     return;
                 }
             }
@@ -219,20 +243,20 @@ fn start_backend() {
         }
 
         // Wait for backend to start
-        println!("⏳ Waiting for backend...");
+        debug_log("Waiting for backend...");
         for i in 0..60 {
             thread::sleep(Duration::from_secs(1));
             if let Ok(resp) = reqwest::blocking::get("http://127.0.0.1:8765/health") {
                 if resp.status().is_success() {
-                    println!("✅ Backend started successfully after {}s!", i);
+                    debug_log(&format!("Backend started successfully after {}s!", i));
                     return;
                 }
             }
             if i % 5 == 0 {
-                println!("⏳ Still waiting... ({}/60s)", i);
+                debug_log(&format!("Still waiting... ({}/60s)", i));
             }
         }
-        eprintln!("❌ Backend failed to start after 60s - check backend_stderr.log");
+        debug_log("Backend failed to start after 60s - check backend_stderr.log");
     });
 }
 

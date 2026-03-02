@@ -84,6 +84,7 @@ Source: "..\apps\worker\intel\github_source.py"; DestDir: "{localappdata}\{#MyAp
 Source: "..\apps\worker\intel\google_trends_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
 Source: "..\apps\worker\intel\hackernews_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
 Source: "..\apps\worker\intel\huggingface_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
+Source: "..\apps\worker\intel\linkedin_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
 Source: "..\apps\worker\intel\perplexity_scraper.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
 Source: "..\apps\worker\intel\playwright_helper.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion
 Source: "..\apps\worker\intel\polymarket_source.py"; DestDir: "{localappdata}\{#MyAppName}\worker\intel"; Flags: ignoreversion

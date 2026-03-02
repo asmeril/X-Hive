@@ -24,6 +24,15 @@ class ContentCategory(str, Enum):
     SCIENCE = "science"                          # 5% target
     PREDICTION_MARKET = "prediction_market"      # prediction markets
     NEWS = "news"                                # general news
+    # Aliases used by various source modules
+    TECH_NEWS = "tech_news"                      # RSS/Telegram/GitHub sources
+    PROGRAMMING = "programming"                  # Telegram/RSS/GitHub sources
+    STARTUP = "startup"                          # RSS/Telegram/AI processor
+    PRODUCTIVITY = "productivity"                # RSS/GitHub sources
+    BLOCKCHAIN = "blockchain"                    # RSS/Telegram/GitHub sources
+    CYBERSECURITY = "cybersecurity"              # RSS/Telegram/GitHub sources
+    DESIGN = "design"                            # AI processor (UX/Design)
+    OTHER = "other"                              # fallback for deserialization
 
 
 # Category distribution targets for balanced content
