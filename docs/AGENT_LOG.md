@@ -70,3 +70,28 @@ Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabi
 - Doğrulama: Task çıktısında `To https://github.com/asmeril/iDeaLQuant.git` ve `[new branch] main -> main`
 - Risk/Açık Konu: Repoda `src/crash_log.txt` (54 MB) için GitHub large-file uyarısı var; ileride LFS/cleanup değerlendirilmeli
 - Sonraki Adım: Hedef repoda branch/tag görünürlüğünü webden kontrol etmek; gerekirse release/koruma kuralları eklemek
+
+## 2026-03-05 01:35 - /publish Workflow'a Zorunlu Tauri Build Adımı Eklendi
+- Kapsam: `.agent/workflows/publish.md`
+- İhtiyaç: Desktop/Tauri tarafındaki geliştirmelerin setup paketine kesin yansımasını sağlamak
+- Kök Neden: Sadece installer derlemek, eski `x-hive-desktop.exe` kullanıldığı durumda UI/Tauri değişikliklerini pakete almayabiliyor
+- Yapılan:
+  - `/publish` akışına setup derlemeden önce zorunlu `npm run tauri build` adımı eklendi
+  - Installer'ın paketlediği dosya yolu net şekilde belirtildi: `apps/desktop/src-tauri/target/release/x-hive-desktop.exe`
+  - Publish adımları yeniden numaralandırıldı
+- Doğrulama: Workflow dosyası içerik kontrolü ile yeni adımın setup build'den önce konumlandığı doğrulandı
+- Risk/Açık Konu: `npm run tauri build` süresi ortama göre uzayabilir; CI/CD'de cache stratejisi düşünülebilir
+- Sonraki Adım: Bir sonraki release'te workflow'u birebir çalıştırıp Tauri binary timestamp + setup timestamp uyumunu kontrol etmek
+
+## 2026-03-05 01:40 - /publish Çalıştırıldı (v1.1.1)
+- Kapsam: `apps/desktop`, `installer/build_setup_versioned.ps1`, `installer/version.txt`, `installer/output`
+- İhtiyaç: Güncel workflow ile publish akışını (Tauri build + setup build) uçtan uca çalıştırmak
+- Kök Neden: Setup paketinin güncel desktop/worker artefact'larıyla üretilmesi ve sürüm artışının kalıcılaştırılması
+- Yapılan:
+  - `npm run tauri build` çalıştırıldı (`apps/desktop`)
+  - `build_setup_versioned.ps1` ile yeni setup üretildi
+  - `version.txt` değeri `1.1.1` olarak güncellendi
+  - Yeni setup çıktısı üretildi: `XHive_Setup_v1.1.1_20260305_013630.exe`
+- Doğrulama: `installer/output` klasöründe yeni dosya görüldü; setup sürümü `1.1.1` olarak doğrulandı
+- Risk/Açık Konu: `x-hive-desktop.exe` timestamp'i değişmedi (incremental/no-op build olasılığı); release öncesi gerekirse clean rebuild stratejisi uygulanmalı
+- Sonraki Adım: Bu publish koşusunu git commit/push ile finalize etmek ve kurulu sürüm üstüne temiz upgrade testi yapmak
