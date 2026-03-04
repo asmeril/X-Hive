@@ -16,6 +16,16 @@ Set-Location "C:\XHive\X-Hive\apps\desktop"
 npm run tauri build
 ```
 
+## 1.1) Zorunlu Stabilizasyon Bekleme (En az 120 sn)
+```powershell
+Start-Sleep -Seconds 120
+Get-Process tauri,cargo,rustc -ErrorAction SilentlyContinue
+```
+
+Not:
+- Tauri build tamamlandıktan sonra en az 2 dakika beklenir.
+- Arka planda derleme/artifact yazımı sürüyorsa bu adımda görünür.
+
 Not:
 - `apps/desktop` veya `apps/desktop/src-tauri` tarafında değişiklik varsa bu adım atlanamaz.
 - Installer, `apps/desktop/src-tauri/target/release/x-hive-desktop.exe` dosyasını paketler.

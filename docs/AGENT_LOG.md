@@ -83,6 +83,20 @@ Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabi
 - Risk/Açık Konu: `npm run tauri build` süresi ortama göre uzayabilir; CI/CD'de cache stratejisi düşünülebilir
 - Sonraki Adım: Bir sonraki release'te workflow'u birebir çalıştırıp Tauri binary timestamp + setup timestamp uyumunu kontrol etmek
 
+## 2026-03-05 01:45 - /publish Düzeltme Koşusu (2+ dk Tauri bekleme ile) Tamamlandı
+- Kapsam: `.agent/workflows/publish.md`, `apps/desktop/src-tauri/target/release/x-hive-desktop.exe`, `installer/version.txt`, `installer/output`
+- İhtiyaç: Tauri build sonrası en az 2 dakika bekleme şartını uygulayarak publish'i doğru şekilde tamamlamak
+- Kök Neden: Hızlı geri dönüşte Tauri derleme süreçleri (`cargo/rustc`) hâlâ çalışırken setup derlemeye geçilmişti
+- Yapılan:
+  - Publish workflow'a `1.1` adımı olarak zorunlu `Start-Sleep -Seconds 120` + süreç kontrolü eklendi
+  - Tauri build yeniden çalıştırıldı ve süreçler tamamen bitene kadar beklendi (`PROC=NONE` doğrulandı)
+  - Tauri binary güncel zaman damgası doğrulandı (`x-hive-desktop.exe`)
+  - Setup yeniden derlendi ve yeni çıktı üretildi: `XHive_Setup_v1.1.2_20260305_014427.exe`
+  - `version.txt` değeri `1.1.2` olarak güncellendi
+- Doğrulama: Tauri süreç sonlanma kontrolü + setup derleme çıktısında `Successful compile` kaydı
+- Risk/Açık Konu: Tauri derleme süresi makine yüküne bağlı değişebilir; bekleme sonrası süreç kontrolü zorunlu tutulmalı
+- Sonraki Adım: Kurulu sürüm üstüne `install_latest_clean.ps1` ile upgrade testi ve kısa smoke test
+
 ## 2026-03-05 01:40 - /publish Çalıştırıldı (v1.1.1)
 - Kapsam: `apps/desktop`, `installer/build_setup_versioned.ps1`, `installer/version.txt`, `installer/output`
 - İhtiyaç: Güncel workflow ile publish akışını (Tauri build + setup build) uçtan uca çalıştırmak
