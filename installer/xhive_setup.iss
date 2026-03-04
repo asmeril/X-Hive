@@ -10,7 +10,12 @@
 #define PythonInstallerURL "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
 
 #define MyAppName "XHive"
-#define MyAppVersion "1.0.0"
+#define MyAppId "{{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+#define MyAppUninstallRegKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}_is1"
+#ifndef MyAppVersion
+  #error MyAppVersion define edilmeli. build_setup_versioned.ps1 ile derleyin.
+#endif
+#define BuildTimestamp GetDateTimeString('yyyymmdd_hhnnss', '', '')
 #define MyAppPublisher "asmeril"
 #define MyAppURL "https://github.com/asmeril/X-Hive"
 #define MyAppExeName "x-hive-desktop.exe"
@@ -20,7 +25,7 @@
 ;   ..\apps\worker\  (tum worker klasoru)
 
 [Setup]
-AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
+AppId={#MyAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -33,7 +38,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 ; Cikti
 OutputDir=output
-OutputBaseFilename=XHive_Setup_v{#MyAppVersion}
+OutputBaseFilename=XHive_Setup_v{#MyAppVersion}_{#BuildTimestamp}
 ; Ikonlar
 SetupIconFile=..\apps\desktop\src-tauri\icons\icon.ico
 ; Sikistirma
@@ -115,6 +120,7 @@ Source: "..\apps\worker\scheduling\post_scheduler.py"; DestDir: "{localappdata}\
 
 ; tools/ - yardimci araclar
 Source: "..\apps\worker\tools\cookie_extractor.py"; DestDir: "{localappdata}\{#MyAppName}\worker\tools"; Flags: ignoreversion
+Source: "..\apps\worker\tools\repair_start_xhive.ps1"; DestDir: "{localappdata}\{#MyAppName}\worker\tools"; Flags: ignoreversion
 Source: "..\apps\worker\tools\__init__.py"; DestDir: "{localappdata}\{#MyAppName}\worker\tools"; Flags: ignoreversion
 
 ; --- KOK PYTHON DOSYALARI (arka plan servisleri + cekirdek) ---
@@ -124,6 +130,8 @@ Source: "..\apps\worker\task_queue.py"; DestDir: "{localappdata}\{#MyAppName}\wo
 Source: "..\apps\worker\api_server.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 Source: "..\apps\worker\approval_manager.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 Source: "..\apps\worker\telegram_bot.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\telegram_hub.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\visibility_engine.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 Source: "..\apps\worker\run.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 Source: "..\apps\worker\run_approval_bot.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 Source: "..\apps\worker\simple_server.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
@@ -141,24 +149,12 @@ Source: "..\apps\worker\safety_logger.py"; DestDir: "{localappdata}\{#MyAppName}
 Source: "..\apps\worker\structured_logger.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 Source: "..\apps\worker\requirements.txt"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 
-; .env.example -> .env olarak kopyala (varsa uzerine yazma - mevcut .env'i silmez)
-Source: "..\apps\worker\.env.example"; DestDir: "{localappdata}\{#MyAppName}\worker"; DestName: ".env"; Flags: onlyifdoesntexist
+; Gercek .env dosyasini kopyala (kullanicinin API anahtarlarinin laptopta gecerli olmasi icin)
+Source: "..\apps\worker\.env"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 
 ; Cookie dosyalari (mevcut olanin uzerine yazmaz - kullanicinin kendi cookie'leri korunur)
 Source: "..\apps\worker\cookies\.gitkeep"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: ignoreversion
-Source: "..\apps\worker\cookies\twitter.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\github.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\reddit.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\linkedin.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\medium.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\substack.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\youtube.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\discord.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\arxiv.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\google_trends.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\huggingface.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\perplexity.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
-Source: "..\apps\worker\cookies\producthunt.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: onlyifdoesntexist
+Source: "..\apps\worker\cookies\*.json"; DestDir: "{localappdata}\{#MyAppName}\worker\cookies"; Flags: ignoreversion
 
 ; NOT: .venv, test_*.py, debug_*.py, *.log, __pycache__ dahil edilmiyor
 
@@ -176,6 +172,101 @@ Filename: "{app}\{#MyAppExeName}"; \
 [Code]
 var
   PythonDownloadPage: TDownloadWizardPage;
+
+function GetUninstallString(): String;
+var
+  UninstPath: String;
+  UninstCmd: String;
+begin
+  UninstPath := '{#MyAppUninstallRegKey}';
+  UninstCmd := '';
+
+  if not RegQueryStringValue(HKCU, UninstPath, 'UninstallString', UninstCmd) then
+    if not RegQueryStringValue(HKLM, UninstPath, 'UninstallString', UninstCmd) then
+      if IsWin64 then
+        RegQueryStringValue(HKLM64, UninstPath, 'UninstallString', UninstCmd);
+
+  Result := UninstCmd;
+end;
+
+function SplitCommandLine(CommandLine: String; var FileName: String; var Params: String): Boolean;
+var
+  S: String;
+  P: Integer;
+begin
+  Result := False;
+  FileName := '';
+  Params := '';
+
+  S := Trim(CommandLine);
+  if S = '' then Exit;
+
+  // "C:\path\unins000.exe" /param1 /param2
+  if S[1] = '"' then
+  begin
+    Delete(S, 1, 1);
+    P := Pos('"', S);
+    if P <= 0 then Exit;
+    FileName := Copy(S, 1, P - 1);
+    Params := Trim(Copy(S, P + 1, Length(S)));
+    Result := True;
+  end
+  else
+  begin
+    // C:\path\unins000.exe /param1 /param2
+    P := Pos(' ', S);
+    if P > 0 then
+    begin
+      FileName := Copy(S, 1, P - 1);
+      Params := Trim(Copy(S, P + 1, Length(S)));
+    end
+    else
+      FileName := S;
+    Result := True;
+  end;
+end;
+
+function InitializeSetup(): Boolean;
+var
+  V: Integer;
+  UninstallString: String;
+  UninstallExe: String;
+  UninstallParams: String;
+  ResultCode: Integer;
+begin
+  Result := True;
+
+  UninstallString := GetUninstallString();
+  if UninstallString <> '' then
+  begin
+    V := MsgBox('Önceki XHive sürümü tespit edildi. Temiz kurulum için kaldırılsın mı?' + #13#10 +
+                '(Ayarlarınız korunacaktır)', mbInformation, MB_YESNO);
+    if V = IDYES then
+    begin
+      if not SplitCommandLine(UninstallString, UninstallExe, UninstallParams) then
+      begin
+        UninstallExe := RemoveQuotes(UninstallString);
+        UninstallParams := '';
+      end;
+
+      if not Exec(UninstallExe,
+                  Trim(UninstallParams + ' /SILENT /NORESTART /SUPPRESSMSGBOXES'),
+                  '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      begin
+        MsgBox('Önceki XHive sürümü kaldırılamadı. Manuel kaldırıp tekrar deneyin.', mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+
+      if ResultCode <> 0 then
+      begin
+        MsgBox('Önceki XHive sürümü kaldırma hatası (kod: ' + IntToStr(ResultCode) + '). Manuel kaldırıp tekrar deneyin.', mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+    end;
+  end;
+end;
 
 function GetPythonPath(): String;
 begin

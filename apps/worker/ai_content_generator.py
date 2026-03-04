@@ -13,7 +13,7 @@ Features:
 import asyncio
 import logging
 import os
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -358,6 +358,330 @@ Sadece cevabı yaz, ek açıklama yapma.
             fallback = f"💬 Great point! {original_tweet[:40]}..."
             logger.warning(f"[WARNING] Using fallback reply")
             return fallback
+        
+    def _extract_content_fields(self, content_item) -> dict:
+        """Extract fields from ContentItem dataclass or dict."""
+        if hasattr(content_item, 'title'):
+            return {
+                "title": content_item.title or "",
+                "url": content_item.url or "",
+                "source": content_item.source_name or "Kaynak",
+                "summary": content_item.ai_summary or content_item.description or "",
+                "category": getattr(content_item, 'category', '') or "",
+            }
+        return {
+            "title": content_item.get("title", ""),
+            "url": content_item.get("url", ""),
+            "source": content_item.get("source_name", content_item.get("source", "Kaynak")),
+            "summary": content_item.get("ai_summary", content_item.get("summary", content_item.get("description", ""))),
+            "category": content_item.get("category", ""),
+        }
+
+    async def generate_tweet_from_content(self, content_item) -> str:
+        """
+        Generate a tweet specifically based on collected intel content.
+        Accepts both ContentItem dataclass and plain dict.
+        """
+        f = self._extract_content_fields(content_item)
+        topic = f["title"]
+        if f["summary"]:
+            topic += f" - {f['summary'][:200]}"
+            
+        styled_prompt = f"""
+Sen viral X/Twitter içerik yazarısın. Şu haber hakkında scroll durduracak bir Türkçe tweet yaz:
+
+Kaynak: {f['source']}
+Başlık: {f['title']}
+Detay: {topic}
+Link: {f['url']}
+
+Viral tweet kuralları:
+- MERAK UYANDIRAN bir açılış yaz ("Bunu biliyor muydunuz?", "X sessizce Y yaptı...", "Herkes X sanıyor ama...")
+- Güçlü bir görüş/iddia belirt, tarafsız haber dili KULLANMA
+- Konuşma dili kullan, resmi gazete dili değil
+- 250 karakteri geçmesin
+- Max 2 hashtag
+- 1-2 emoji (abartma)
+- Linki tweetin sonuna koy
+- Sadece tweet metnini döndür, açıklama yapma
+"""
+        
+        try:
+            return await self._generate_with_retry(styled_prompt, max_retries=2, initial_delay=1.0)
+        except Exception as e:
+            logger.error(f"Failed to generate tweet from content: {e}")
+            return f"{f['title']} detayları burada! 👇\n\n{f['url']} #Teknoloji #{f['source'].replace(' ', '')}"
+
+    # ─── VIRAL SCORING & THREAD GENERATION ────────────────────
+
+    async def score_viral_potential(self, items: list) -> list:
+        """
+        AI ile içerik listesini viral potansiyeline göre skorla.
+        Her item'a 1-10 arası viral_score atar.
+        En yüksek skorlular döndürülür.
+        """
+        if not items:
+            return []
+
+        # Başlıkları topla (max 40 item gönder, API limiti için)
+        summaries = []
+        for i, item in enumerate(items[:40]):
+            f = self._extract_content_fields(item)
+            summaries.append(f"{i+1}. [{f['source']}] {f['title']}")
+
+        items_text = "\n".join(summaries)
+
+        prompt = f"""Sen X/Twitter viral içerik stratejistisin. 10M+ impression almış yüzlerce thread analiz etmişsin.
+
+Aşağıdaki haber/içerik listesini oku ve HER BİRİNE 1-10 arası bir viral potansiyel skoru ver.
+
+🎯 SKORLAMA KRİTERLERİ (ağırlık sırasıyla):
+
+1. TARTIŞMA POTANSİYELİ (×3): İnsanlar buna "katılıyorum/katılmıyorum" diye yorum yapar mı? Kutuplaştırıcı mı?
+2. MERAK BOŞLUĞU (×3): "Bunu bilmiyordum!" dedirtir mi? Şaşırtıcı bir açı var mı?
+3. KİŞİSEL ETKİ (×2): Okuyanın hayatını, işini, parasını etkiler mi? "Bu beni ilgilendiriyor" dedirtir mi?
+4. ZAMANLAMA (×2): Şu an herkesin konuştuğu bir konuyla bağlantılı mı?
+5. PAYLAŞILABILIRLIK (×1): İnsanlar bunu paylaşarak "akıllı/bilgili" görünür mü?
+6. EVRENSELLIK (×1): Sadece niş mi yoksa geniş kitle mi ilgilenir?
+
+⚠️ DÜŞÜK SKOR VER (1-4):
+- Sıradan ürün güncellemesi, versiyon notu
+- "X şirketi Y yaptı" tarzı düz haber
+- Niş akademik makale (geniş kitleyi ilgilendirmeyen)
+- Zaten herkesin bildiği şeyler
+
+✅ YÜKSEK SKOR VER (7-10):
+- Endüstriyi sarsacak gelişmeler
+- Parasal/kariyer etkisi olan haberler
+- Büyük şirketlerin skandalları, sızıntıları
+- "İmkansız" deneni başaran projeler
+- Toplumu bölen tartışmalı konular
+- Beklenmedik veri/istatistikler
+
+İçerik listesi:
+{items_text}
+
+SADECE aşağıdaki formatta JSON döndür, başka hiçbir şey yazma:
+[{{"index": 1, "score": 8}}, {{"index": 2, "score": 3}}, ...]
+"""
+        try:
+            response = await self._generate_with_retry(prompt, max_retries=2, initial_delay=1.0)
+            # JSON parse
+            import json as _json
+            # Temizle (bazen ```json ... ``` ile sarar)
+            clean = response.strip()
+            if clean.startswith("```"):
+                clean = clean.split("\n", 1)[1] if "\n" in clean else clean[3:]
+                if clean.endswith("```"):
+                    clean = clean[:-3]
+                clean = clean.strip()
+            
+            scores = _json.loads(clean)
+            
+            # Skoru atama
+            scored_items = []
+            score_map = {s["index"]: s["score"] for s in scores}
+            for i, item in enumerate(items[:40]):
+                score = score_map.get(i + 1, 5)
+                scored_items.append({"item": item, "viral_score": score})
+            
+            # Skordan büyükten küçüğe sırala
+            scored_items.sort(key=lambda x: x["viral_score"], reverse=True)
+            logger.info(f"✅ Viral scoring complete. Top score: {scored_items[0]['viral_score'] if scored_items else 0}")
+            return scored_items
+            
+        except Exception as e:
+            logger.error(f"❌ Viral scoring failed: {e}")
+            # Fallback: hepsine 5 ver
+            return [{"item": item, "viral_score": 5} for item in items]
+
+    async def generate_thread(self, content_item, language: str = "tr") -> list:
+        """
+        Tek bir içerik için X/Twitter thread'i üret (3-5 tweet).
+        
+        Args:
+            content_item: ContentItem veya dict
+            language: 'tr' veya 'en'
+        
+        Returns:
+            List of tweet strings (thread sırasıyla)
+        """
+        f = self._extract_content_fields(content_item)
+        
+        if language == "tr":
+            prompt = f"""Sen X/Twitter'da 10M+ impression alan thread'ler yazan bir viral içerik uzmanısın.
+
+Aşağıdaki haber/içerik hakkında TÜRKÇE bir viral THREAD yaz (4-6 tweet):
+
+Kaynak: {f['source']}
+Başlık: {f['title']}
+Detay: {f['summary'][:500]}
+Link: {f['url']}
+
+🔥 VİRAL THREAD STRATEJİSİ:
+
+📌 TWEET 1 - HOOK (en kritik tweet, okumaya devam ettirmeli):
+Aşağıdaki hook tekniklerinden BİRİNİ kullan:
+- MERAK BOŞLUĞU: "X sessizce Y yaptı ve kimse fark etmedi..."
+- ŞOK EDİCİ İSTATİSTİK: "Y'nin %87'si Z yapıyor. Ama asıl şok edici olan..."
+- CESUR İDDİA: "X öldü. İşte neden herkes yanlış bakıyor..."
+- KİŞİSEL HİKAYE: "3 yıl önce X yapıyordum. Bugün Y her şeyi değiştirdi."
+- KARŞI SEZGISEL: "Herkes X sanıyor. Gerçek tam tersi."
+🧵 ile başla, sonunda "👇" koy.
+
+📌 TWEET 2-4 - GÖVDe (bilgiyi parçala, her tweet bir nugget):
+- Her tweet tek bir güçlü fikir/veri içersin
+- Kısa cümleler kullan (max 15 kelime per cümle)
+- Somut sayılar, karşılaştırmalar, örnekler ver
+- "Ama asıl mesele şu:" gibi geçiş cümleleri kullan
+- Her tweet tek başına da değer versin (RT edilebilir olsun)
+
+📌 SON TWEET - CTA (harekete geçir):
+- Link ekle
+- "Takip et + 🔔 aç" tarzı CTA
+- Max 2 hashtag
+- Tartışma sorusu sor: "Sen ne düşünüyorsun?"
+
+⛔ YAPMA:
+- "Merhaba arkadaşlar" gibi başlama
+- Düz haber dili kullanma
+- "Bu önemli bir gelişme" gibi sıkıcı cümleler
+- Thread numarası (1/, 2/) kullanma
+- 3'ten fazla emoji üst üste koyma
+
+✅ YAP:
+- Konuşma dili kullan ("Bak şimdi", "Düşünsene", "İşte olay burada")
+- Kısa paragraflar (2-3 satır max)
+- Güçlü fiiller kullan
+- Her tweeti cliffhanger ile bitir
+- Aranabilir anahtar kelimeleri (AI, GPT, Bitcoin, Startup vb.) metne DOĞAL yedir (hashtag olarak değil)
+- İçerikte geçen şirket/kişi varsa @handle ile etiketle (örn: @OpenAI, @elonmusk)
+
+SADECE tweet metinlerini döndür, her birini --- ile ayır. Başka açıklama yapma.
+"""
+        else:
+            prompt = f"""You are a viral X/Twitter ghostwriter who has written threads with 10M+ impressions.
+
+Write an ENGLISH viral THREAD (4-6 tweets) about this content:
+
+Source: {f['source']}
+Title: {f['title']}
+Detail: {f['summary'][:500]}
+Link: {f['url']}
+
+🔥 VIRAL THREAD PLAYBOOK:
+
+📌 TWEET 1 - THE HOOK (most critical tweet, must stop the scroll):
+Use ONE of these proven hook formulas:
+- CURIOSITY GAP: "X just quietly did Y and nobody noticed..."
+- SHOCKING STAT: "87% of Z does W. But the real shock is..."
+- BOLD CLAIM: "X is dead. Here's why everyone is looking at it wrong..."
+- CONTRARIAN TAKE: "Everyone thinks X. The truth is the opposite."
+- PREDICTION: "In 12 months, X will completely change Y. Here's why:"
+Start with 🧵, end with 👇
+
+📌 TWEETS 2-4 - THE BODY (each tweet = one powerful insight):
+- One strong idea per tweet
+- Short punchy sentences (max 15 words each)
+- Use concrete numbers, comparisons, examples
+- Transition phrases: "But here's the thing:", "It gets wilder:"
+- Each tweet should be independently retweetable
+
+📌 LAST TWEET - THE CTA (drive action):
+- Include the link
+- Ask a debate question: "What's your take?"
+- Max 2 hashtags
+- "Follow for more" type CTA
+
+⛔ DON'T:
+- Start with "Hey everyone" or "Today I want to talk about"
+- Use flat news language
+- Say "This is an important development"
+- Use thread numbering (1/, 2/)
+- Stack more than 3 emojis
+
+✅ DO:
+- Write like you're telling a friend something mind-blowing
+- Use power verbs and short paragraphs
+- End each tweet with a cliffhanger
+- Be opinionated, not neutral
+- Naturally weave in searchable keywords (AI, GPT, Bitcoin, Startup etc.) into the text — NOT as hashtags
+- If a company/person is mentioned in the content, tag their @handle (e.g., @OpenAI, @elonmusk)
+
+Return ONLY the tweet texts, separated by ---. No extra explanation.
+"""
+        
+        try:
+            raw = await self._generate_with_retry(prompt, max_retries=2, initial_delay=1.5)
+            # --- ile ayır
+            tweets = [t.strip() for t in raw.split("---") if t.strip()]
+            
+            # Boş veya çok kısa olanları filtrele
+            tweets = [t for t in tweets if len(t) > 20]
+            
+            if not tweets:
+                raise ValueError("Empty thread generated")
+            
+            logger.info(f"✅ Thread generated ({language}): {len(tweets)} tweets")
+            return tweets
+            
+        except Exception as e:
+            logger.error(f"❌ Thread generation failed ({language}): {e}")
+            # Fallback: tek tweet
+            if language == "tr":
+                return [f"🧵 {f['title']}\n\nDetaylar 👇\n{f['url']} #Teknoloji"]
+            else:
+                return [f"🧵 {f['title']}\n\nDetails 👇\n{f['url']} #Tech"]
+
+    async def generate_viral_threads(self, items: list, top_n: int = 8) -> list:
+        """
+        Tam pipeline: Viral skorla → En iyi N'ini seç → TR + EN thread üret.
+        
+        Returns:
+            List of dicts: [{item, viral_score, tr_thread, en_thread}, ...]
+        """
+        logger.info(f"🚀 Starting viral thread pipeline for {len(items)} items (top {top_n})...")
+        
+        # 1. Viral skorlama
+        scored = await self.score_viral_potential(items)
+        
+        # 2. En iyi N tanesini al (skor >= 6 olanları öncelikle)
+        top_items = scored[:top_n]
+        logger.info(f"🏆 Selected top {len(top_items)} items for thread generation")
+        
+        results = []
+        for entry in top_items:
+            item = entry["item"]
+            viral_score = entry["viral_score"]
+            
+            # Skor çok düşükse (4 ve altı) atla
+            if viral_score <= 4:
+                logger.info(f"⏭️ Skipping low-score item (score={viral_score})")
+                continue
+            
+            try:
+                # TR ve EN threadleri paralel üret
+                tr_task = self.generate_thread(item, language="tr")
+                en_task = self.generate_thread(item, language="en")
+                tr_thread, en_thread = await asyncio.gather(tr_task, en_task)
+                
+                results.append({
+                    "item": item,
+                    "viral_score": viral_score,
+                    "tr_thread": tr_thread,
+                    "en_thread": en_thread,
+                })
+                logger.info(f"✅ Threads ready (score={viral_score}): {self._extract_content_fields(item)['title'][:50]}...")
+                
+                # Rate limit koruması (Gemini free tier)
+                await asyncio.sleep(2)
+                
+            except Exception as e:
+                logger.error(f"❌ Thread generation failed for item: {e}")
+                continue
+        
+        logger.info(f"🎉 Viral thread pipeline complete: {len(results)} threads ready")
+        return results
 
 
 # Singleton instance

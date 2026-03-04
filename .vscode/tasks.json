@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Mirror transfer iDeaLQuant to asmeril",
+			"type": "shell",
+			"command": "git clone --mirror https://github.com/marvelariantomarbun-spec/iDeaLQuant.git \"C:\\XHive\\tmp\\iDeaLQuant.mirror\"; git -C \"C:\\XHive\\tmp\\iDeaLQuant.mirror\" remote set-url --push origin https://github.com/asmeril/iDeaLQuant.git; git -C \"C:\\XHive\\tmp\\iDeaLQuant.mirror\" push --mirror",
+			"isBackground": false
+		},
+		{
+			"label": "XHive /end workflow now",
+			"type": "shell",
+			"command": "$ErrorActionPreference = 'Continue'; Set-Location \"C:\\XHive\\X-Hive\"; Write-Host \"[1/4] Desktop process cleanup\"; Get-Process -Name 'x-hive-desktop','XHive' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Write-Host \"[2/4] Backend app.main cleanup\"; Get-CimInstance Win32_Process -Filter \"Name='python.exe' or Name='pythonw.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine -match '-m app.main' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 1; Write-Host \"[3/4] Health check\"; try { Invoke-WebRequest -Uri \"http://127.0.0.1:8765/health\" -UseBasicParsing -TimeoutSec 2 | Out-Null; Write-Host \"[WARN] Backend still responds on 8765\" } catch { Write-Host \"[OK] Backend closed\" }; Write-Host \"[4/4] Git checkpoint\"; $branch = (git rev-parse --abbrev-ref HEAD).Trim(); $changes = git status --porcelain; if ([string]::IsNullOrWhiteSpace($changes)) { Write-Host \"[OK] No changes to commit\" } else { git add .; git commit -m \"chore: /end session checkpoint (2026-03-05)\"; if ($LASTEXITCODE -eq 0) { git push origin $branch } else { Write-Host \"[WARN] Commit failed or nothing to commit\" } }; Write-Host \"[DONE] /end workflow completed\"",
+			"isBackground": false
+		}
+	]
+}

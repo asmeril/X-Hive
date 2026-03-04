@@ -432,24 +432,15 @@ class XDaemon:
         # 🛡️ CRITICAL: Safety check BEFORE operation
         await self._safety_check(OperationType.TWEET)
         
-        def count_x_characters(text):
-            """Count characters using X.com rules"""
+        def count_x_characters(value: str) -> int:
             import re
-            # Count emojis
             emoji_pattern = r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001F900-\U0001F9FF]'
-            emojis = len(re.findall(emoji_pattern, text))
-            
-            # Count URLs (shortened to 23 chars each)
             url_pattern = r'https?://\S+|www\.\S+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}'
-            urls = re.findall(url_pattern, text)
-            url_chars = len(urls) * 23
-            
-            # Count remaining characters
-            text_without_urls = re.sub(url_pattern, '', text)
+            emojis = len(re.findall(emoji_pattern, value))
+            urls = re.findall(url_pattern, value)
+            text_without_urls = re.sub(url_pattern, '', value)
             text_without_emojis = re.sub(emoji_pattern, '', text_without_urls)
-            regular_chars = len(text_without_emojis)
-            
-            return emojis * 2 + url_chars + regular_chars
+            return emojis * 2 + (len(urls) * 23) + len(text_without_emojis)
         
         # Check X.com character count for thread decision
         x_char_count = count_x_characters(text)
@@ -477,8 +468,8 @@ class XDaemon:
                 # Reload cookies before each operation (in case they were updated)
                 await self.chrome_pool.load_cookies()
 
-                # First navigate to x.com to activate cookies (like Selenium does)
-                await page.goto("https://x.com/home", wait_until="domcontentloaded")
+                logger.info("Navigating to /home for cookie activation...")
+                await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
                 await asyncio.sleep(3)  # Wait for cookie activation and redirects
                 
                 # Check if redirected to login page
@@ -490,9 +481,10 @@ class XDaemon:
                         "error": "Session expired. Cookies may be invalid. Please re-import cookies.",
                     }
                 
-                # Now navigate to compose page (XiDeAI Pro exact URL)
-                await page.goto("https://x.com/compose/tweet", wait_until="domcontentloaded")
+                logger.info("Navigating to /compose/tweet...")
+                await page.goto("https://x.com/compose/tweet", wait_until="commit", timeout=30000)
                 await HumanBehavior.simulate_page_load_wait()  # Human delay
+                logger.info(f"Compose page current URL: {page.url}")
                 
                 # Check again after compose navigation
                 current_url = page.url.lower()
@@ -503,67 +495,57 @@ class XDaemon:
                         "error": "Session expired. Cookies may be invalid. Please re-import cookies.",
                     }
 
-                # Find compose box with simple, robust selectors (XiDeAI Pro style)
                 compose_box = None
                 compose_selectors = [
-                    'div[contenteditable="true"]',          # Primary - any contenteditable
-                    'div[role="textbox"]',                  # Backup - textbox role
-                    '[data-testid*="textbox"]',             # Data-testid containing textbox
-                    '[data-testid*="tweet"]',               # Data-testid containing tweet
-                    'div[contenteditable]',                 # Alternative contenteditable
+                    'div[data-testid="tweetTextarea_0"]',
+                    '[data-testid^="tweetTextarea_"]',
+                    'div[role="textbox"][contenteditable="true"]',
+                    'div[contenteditable="true"][role="textbox"]',
                 ]
-                
                 for i, selector in enumerate(compose_selectors):
                     try:
-                        logger.info(f"Looking for compose box {i+1}: {selector}")
-                        elements = page.locator(selector)
-                        count = await elements.count()
-                        logger.info(f"Found {count} elements with selector {selector}")
-                        
-                        if count > 0:
-                            # Try each element to find the working one
-                            for j in range(count):
-                                element = elements.nth(j)
-                                try:
-                                    await element.wait_for(state="visible", timeout=3000)
-                                    is_enabled = await element.is_enabled()
-                                    is_editable = await element.get_attribute("contenteditable")
-                                    
-                                    if is_enabled and (is_editable == "true" or is_editable == ""):
-                                        compose_box = element
-                                        logger.info(f"✅ Found working compose box: {selector} #{j}")
-                                        break
-                                except Exception as elem_error:
-                                    logger.debug(f"Element {j} not suitable: {elem_error}")
-                                    continue
-                        
-                        if compose_box:
-                            break
-                            
-                    except Exception as e:
-                        logger.warning(f"⚠️ Selector {i+1} failed: {selector} - {e}")
+                        logger.info(f"Trying compose selector {i+1}: {selector}")
+                        candidate = page.locator(selector).first
+                        await candidate.wait_for(state="visible", timeout=7000)
+                        compose_box = candidate
+                        logger.info(f"✅ Found compose box with selector: {selector}")
+                        break
+                    except Exception:
                         continue
                 
                 if not compose_box:
                     logger.error("❌ Could not find any working compose box")
                     raise PlaywrightTimeoutError("Compose box not found")
                 
-                await compose_box.click()
-                await asyncio.sleep(1)  # Wait for focus
-                
-                # Clear any existing text first (like XiDeAI Pro atomic_clear)
-                await compose_box.press("Control+a")
-                await asyncio.sleep(0.2)
-                await compose_box.press("Backspace")
-                await asyncio.sleep(0.5)
+                logger.info("Focusing compose box...")
+                try:
+                    await compose_box.click(timeout=5000)
+                except Exception:
+                    try:
+                        await compose_box.click(timeout=5000, force=True)
+                    except Exception:
+                        await compose_box.evaluate("el => el.focus()")
+                await asyncio.sleep(0.4)
+
+                logger.info("Clearing compose box...")
+                try:
+                    await compose_box.fill("")
+                except Exception:
+                    try:
+                        await compose_box.press("Control+a")
+                        await compose_box.press("Backspace")
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.3)
                 
                 # Try multiple text input methods (XiDeAI Pro strategy)
                 text_inserted = False
                 
                 # Method 1: Fill (Playwright's native method)
                 try:
+                    logger.info("Trying text input via fill()...")
                     await compose_box.fill(text)
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.6)
                     current_text = await compose_box.inner_text()
                     if len(current_text.strip()) >= len(text.strip()) * 0.8:
                         logger.info("✅ Text inserted via fill()")
@@ -574,8 +556,9 @@ class XDaemon:
                 # Method 2: Type character by character (if fill failed)
                 if not text_inserted:
                     try:
-                        await compose_box.type(text, delay=50)  # 50ms per character
-                        await asyncio.sleep(1)
+                        logger.info("Trying text input via type()...")
+                        await compose_box.type(text, delay=20)
+                        await asyncio.sleep(0.5)
                         current_text = await compose_box.inner_text()
                         if len(current_text.strip()) >= len(text.strip()) * 0.8:
                             logger.info("✅ Text inserted via type()")
@@ -586,6 +569,7 @@ class XDaemon:
                 # Method 3: JavaScript insertion (last resort)
                 if not text_inserted:
                     try:
+                        logger.info("Trying text input via JS evaluate()...")
                         await page.evaluate("""
                             (element, text) => {
                                 element.focus();
@@ -594,7 +578,7 @@ class XDaemon:
                                 element.dispatchEvent(new Event('change', { bubbles: true }));
                             }
                         """, compose_box, text)
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(0.5)
                         logger.info("✅ Text inserted via JavaScript")
                         text_inserted = True
                     except Exception as e:
@@ -625,88 +609,58 @@ class XDaemon:
                         except Exception as e:
                             logger.warning(f"Image upload failed: {e}")
 
-                # Click post button with XiDeAI Pro compatible selectors
+                await asyncio.sleep(1.2)
+
                 post_button = None
                 post_selectors = [
-                    'div[data-testid="tweetButtonInline"]',   # Inline (reply mode)
-                    'div[data-testid="tweetButton"]',         # Main tweet button
-                    'button[data-testid="tweetButton"]',      # Button element
-                    '//span[text()="Gönderi yayınla"]/../../..',  # Turkish text
-                    '//span[text()="Post"]/../../..',          # English text
-                    'div[role="button"][data-testid*="Button"]', # Any button with testid
+                    "button[data-testid='tweetButton']",
+                    "div[data-testid='tweetButton']",
+                    "div[data-testid='tweetButtonInline']",
+                    "div[role='button'][data-testid$='Button']",
                 ]
-                
-                for i, btn_selector in enumerate(post_selectors):
+                for selector in post_selectors:
                     try:
-                        logger.info(f"Trying post button {i+1}: {btn_selector}")
-                        if btn_selector.startswith('//'):
-                            post_button = page.locator(f"xpath={btn_selector}").first
-                            await post_button.wait_for(state="visible", timeout=5000)
-                        else:
-                            post_button = await self._wait_for_element(page, btn_selector, timeout=5000)
-                        if post_button:
-                            logger.info(f"✅ Found post button with selector: {btn_selector}")
-                            break
-                    except (PlaywrightTimeoutError, Exception) as e:
-                        logger.warning(f"⚠️ Post button {i+1} failed: {btn_selector} - {e}")
-                        continue
-                
-                # Find post button with XiDeAI Pro exact selectors and logic
-                await asyncio.sleep(2)  # Wait for UI state
-                
-                post_button = None
-                # XiDeAI Pro exact selectors
-                selectors = [
-                    "[data-testid='tweetButtonInline']", 
-                    "[data-testid='tweetButton']", 
-                    "div[role='button'][data-testid$='Button']"
-                ]
-                
-                for selector in selectors:
-                    try:
-                        logger.info(f"Trying XiDeAI Pro selector: {selector}")
                         buttons = page.locator(selector)
-                        button_count = await buttons.count()
-                        
-                        for i in range(button_count):
-                            btn = buttons.nth(i)
+                        count = await buttons.count()
+                        if count == 0:
+                            continue
+                        for index in range(count):
+                            btn = buttons.nth(index)
                             try:
-                                await btn.wait_for(state="visible", timeout=3000)
-                                is_enabled = await btn.is_enabled()
-                                is_disabled = await btn.get_attribute("aria-disabled")
-                                is_displayed = await btn.is_visible()
-                                
-                                # XiDeAI Pro exact check
-                                if is_enabled and is_disabled != "true" and is_displayed:
-                                    logger.info(f"✅ XiDeAI Pro style button found: {selector} #{i}")
-                                    post_button = btn
-                                    break
-                            except Exception as e:
-                                logger.debug(f"Button {i} check failed: {e}")
+                                await btn.wait_for(state="visible", timeout=2500)
+                                aria_disabled = await btn.get_attribute("aria-disabled")
+                                if aria_disabled == "true":
+                                    continue
+                                if not await btn.is_enabled():
+                                    continue
+                                post_button = btn
+                                logger.info(f"✅ Found enabled post button: {selector} #{index}")
+                                break
+                            except Exception:
                                 continue
-                        
                         if post_button:
                             break
-                            
-                    except Exception as e:
-                        logger.warning(f"Selector {selector} failed: {e}")
+                    except Exception:
                         continue
-                
+
                 if not post_button:
-                    logger.error("❌ No post button found with XiDeAI Pro selectors")
-                    raise PlaywrightTimeoutError("Post button not found")
+                    logger.error("❌ No enabled post button found")
+                    raise PlaywrightTimeoutError("Post button not found or disabled")
                 
                 # Click with JavaScript (like XiDeAI Pro)
                 try:
-                    logger.info("Clicking post button with JavaScript...")
-                    await page.evaluate("button => button.click()", post_button)
-                    await asyncio.sleep(0.5)
-                except Exception as js_click_error:
-                    logger.warning(f"JS click failed, trying normal click: {js_click_error}")
-                    await post_button.click()
+                    logger.info("Clicking post button...")
+                    await post_button.click(timeout=5000)
+                except Exception as click_error:
+                    logger.warning(f"Direct click failed, trying JS click: {click_error}")
+                    await post_button.evaluate("el => el.click()")
                 
                 # Wait for post confirmation
                 await asyncio.sleep(3)
+
+                tweet_url = await self._extract_latest_tweet_url(page)
+                if not tweet_url:
+                    tweet_url = page.url
 
                 logger.info("✅ Tweet posted successfully")
                 
@@ -715,7 +669,7 @@ class XDaemon:
                 
                 return {
                     "success": True,
-                    "tweet_url": page.url,  # URL after posting
+                    "tweet_url": tweet_url,
                     "text": text,
                 }
 
@@ -727,6 +681,176 @@ class XDaemon:
                         "error": f"Timeout after {self.max_retries} attempts",
                     }
                 await asyncio.sleep(2)
+
+    async def _extract_latest_tweet_url(self, page: Page) -> Optional[str]:
+        """
+        Try to extract the latest posted tweet URL from timeline/compose contexts.
+        """
+        selectors = [
+            "article[data-testid='tweet'] a[href*='/status/']",
+            "a[href*='/status/']",
+        ]
+
+        for selector in selectors:
+            try:
+                links = page.locator(selector)
+                count = await links.count()
+                for index in range(min(count, 8)):
+                    href = await links.nth(index).get_attribute("href")
+                    if not href:
+                        continue
+                    if "/status/" not in href:
+                        continue
+                    if href.startswith("http://") or href.startswith("https://"):
+                        return href
+                    if href.startswith("/"):
+                        return f"https://x.com{href}"
+                    return f"https://x.com/{href}"
+            except Exception:
+                continue
+
+        if "/status/" in page.url:
+            return page.url
+        return None
+
+    async def _post_reply_in_thread(self, parent_tweet_url: str, text: str) -> Dict:
+        """
+        Post a reply to a specific tweet URL for thread chaining.
+        """
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                logger.info(f"↪️ Posting thread reply (attempt {attempt}/{self.max_retries})")
+
+                page = await self.chrome_pool.get_page()
+                await self.chrome_pool.load_cookies()
+
+                await page.goto(parent_tweet_url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(1.5)
+
+                reply_button = None
+                reply_selectors = [
+                    'button[data-testid="reply"]',
+                    'div[data-testid="reply"]',
+                    '[data-testid="reply"]',
+                ]
+                for selector in reply_selectors:
+                    try:
+                        candidate = page.locator(selector).first
+                        await candidate.wait_for(state="visible", timeout=5000)
+                        reply_button = candidate
+                        break
+                    except Exception:
+                        continue
+
+                if not reply_button:
+                    raise PlaywrightTimeoutError("Reply button not found")
+
+                try:
+                    await reply_button.click(timeout=5000)
+                except Exception:
+                    await reply_button.click(timeout=5000, force=True)
+                await asyncio.sleep(1.0)
+
+                compose_box = None
+                compose_selectors = [
+                    'div[data-testid="tweetTextarea_0"]',
+                    '[data-testid^="tweetTextarea_"]',
+                    'div[role="textbox"][contenteditable="true"]',
+                    'div[contenteditable="true"][role="textbox"]',
+                ]
+                for selector in compose_selectors:
+                    try:
+                        candidate = page.locator(selector).first
+                        await candidate.wait_for(state="visible", timeout=7000)
+                        compose_box = candidate
+                        break
+                    except Exception:
+                        continue
+
+                if not compose_box:
+                    raise PlaywrightTimeoutError("Reply compose box not found")
+
+                try:
+                    await compose_box.click(timeout=5000)
+                except Exception:
+                    try:
+                        await compose_box.click(timeout=5000, force=True)
+                    except Exception:
+                        await compose_box.evaluate("el => el.focus()")
+
+                text_inserted = False
+                try:
+                    await compose_box.fill(text)
+                    await asyncio.sleep(0.5)
+                    current_text = await compose_box.inner_text()
+                    if len(current_text.strip()) >= len(text.strip()) * 0.8:
+                        text_inserted = True
+                except Exception:
+                    pass
+
+                if not text_inserted:
+                    await compose_box.type(text, delay=20)
+                    await asyncio.sleep(0.5)
+
+                post_button = None
+                post_selectors = [
+                    "button[data-testid='tweetButton']",
+                    "div[data-testid='tweetButton']",
+                    "div[data-testid='tweetButtonInline']",
+                    "div[role='button'][data-testid$='Button']",
+                ]
+                for selector in post_selectors:
+                    try:
+                        buttons = page.locator(selector)
+                        count = await buttons.count()
+                        for index in range(count):
+                            btn = buttons.nth(index)
+                            try:
+                                await btn.wait_for(state="visible", timeout=2500)
+                                aria_disabled = await btn.get_attribute("aria-disabled")
+                                if aria_disabled == "true":
+                                    continue
+                                if not await btn.is_enabled():
+                                    continue
+                                post_button = btn
+                                break
+                            except Exception:
+                                continue
+                        if post_button:
+                            break
+                    except Exception:
+                        continue
+
+                if not post_button:
+                    raise PlaywrightTimeoutError("Reply post button not found")
+
+                try:
+                    await post_button.click(timeout=5000)
+                except Exception:
+                    await post_button.evaluate("el => el.click()")
+
+                await asyncio.sleep(2.5)
+                reply_url = await self._extract_latest_tweet_url(page)
+                if not reply_url:
+                    reply_url = parent_tweet_url
+
+                self.rate_limiter.record_operation(OperationType.REPLY)
+                logger.info("✅ Thread reply posted successfully")
+
+                return {
+                    "success": True,
+                    "reply_url": reply_url,
+                    "text": text,
+                }
+
+            except Exception as e:
+                logger.warning(f"Thread reply failed (attempt {attempt}): {e}")
+                if attempt == self.max_retries:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                    }
+                await asyncio.sleep(1.5)
 
             except Exception as e:
                 logger.error(f"Tweet post failed (attempt {attempt}): {e}")
@@ -1261,17 +1385,43 @@ class XDaemon:
             first_result = await self._post_single_tweet(numbered_chunks[0], images)
             if not first_result.get("success"):
                 return first_result
+
+            parent_url = first_result.get("tweet_url", "")
+            if not parent_url or "/status/" not in parent_url:
+                logger.warning("⚠️ First tweet URL is not a status URL; falling back to standalone posts")
             
-            # Post remaining tweets as replies (simplified for now)
+            # Post remaining tweets chained as replies (2nd -> 1st, 3rd -> 2nd, 4th -> 3rd ...)
             for i, chunk in enumerate(numbered_chunks[1:], 2):
                 try:
-                    await asyncio.sleep(3)  # Delay between thread tweets
-                    chunk_result = await self._post_single_tweet(chunk)
+                    await asyncio.sleep(2.0)
+
+                    if parent_url and "/status/" in parent_url:
+                        chunk_result = await self._post_reply_in_thread(parent_url, chunk)
+                    else:
+                        chunk_result = await self._post_single_tweet(chunk)
+
                     if not chunk_result.get("success"):
-                        logger.warning(f"Thread tweet {i} failed: {chunk_result.get('error')}")
+                        return {
+                            "success": False,
+                            "error": f"Thread tweet {i} failed: {chunk_result.get('error')}",
+                            "thread_count": total,
+                            "posted_count": i - 1,
+                            "tweet_url": first_result.get("tweet_url", ""),
+                        }
+
+                    parent_url = (
+                        chunk_result.get("reply_url")
+                        or chunk_result.get("tweet_url")
+                        or parent_url
+                    )
                 except Exception as e:
-                    logger.warning(f"Thread tweet {i} error: {e}")
-                    continue
+                    return {
+                        "success": False,
+                        "error": f"Thread tweet {i} error: {e}",
+                        "thread_count": total,
+                        "posted_count": i - 1,
+                        "tweet_url": first_result.get("tweet_url", ""),
+                    }
             
             return {
                 "success": True,

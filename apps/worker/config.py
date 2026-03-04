@@ -57,6 +57,32 @@ class Settings(BaseSettings):
 # Create settings instance
 settings = Settings()
 
+
+def _is_legacy_root_path(path_value: str) -> bool:
+    try:
+        normalized = str(path_value).replace('/', '\\').lower()
+        return normalized.startswith(r"c:\\xhive")
+    except Exception:
+        return False
+
+
+# Production install safety:
+# If installed worker is reading .env from LocalAppData but legacy absolute
+# paths (C:\XHive\...) exist in env, force LocalAppData defaults.
+if _env_path == _env_appdata:
+    if _is_legacy_root_path(settings.LOCK_PATH):
+        settings.LOCK_PATH = str(_appdata_base / "locks" / "x_session.lock")
+        logger.warning("⚠️ LOCK_PATH legacy value detected, normalized to LocalAppData")
+    if _is_legacy_root_path(settings.DATA_PATH):
+        settings.DATA_PATH = str(_appdata_base / "data")
+        logger.warning("⚠️ DATA_PATH legacy value detected, normalized to LocalAppData")
+    if _is_legacy_root_path(settings.BROWSER_DATA_DIR):
+        settings.BROWSER_DATA_DIR = str(_appdata_base / "browser_data")
+        logger.warning("⚠️ BROWSER_DATA_DIR legacy value detected, normalized to LocalAppData")
+    if _is_legacy_root_path(settings.COOKIE_PATH):
+        settings.COOKIE_PATH = _default_cookie_path
+        logger.warning("⚠️ COOKIE_PATH legacy value detected, normalized to LocalAppData")
+
 # Export individual variables for backward compatibility
 TELEGRAM_BOT_TOKEN = settings.TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID = settings.TELEGRAM_CHAT_ID

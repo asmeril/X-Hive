@@ -17,6 +17,7 @@ class ApprovalStatus(Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     EDITED = "edited"
+    PROCESSED = "processed"
 
 
 class ApprovalQueueItem:
@@ -34,19 +35,33 @@ class ApprovalQueueItem:
         status: ApprovalStatus = ApprovalStatus.PENDING,
         created_at: Optional[datetime] = None,
         approved_at: Optional[datetime] = None,
-        notes: Optional[str] = None
+        notes: Optional[str] = None,
+        viral_score: float = 0.0,
+        tr_thread: Optional[List[str]] = None,
+        en_thread: Optional[List[str]] = None,
+        mentions: Optional[List[str]] = None,
+        keywords: Optional[List[str]] = None,
+        image_url: Optional[str] = None,
+        sniper_targets: Optional[List[Dict]] = None,
     ):
         """
         Initialize approval queue item.
         
         Args:
             content_item: Original content item
-            generated_tweet: AI-generated tweet text
+            generated_tweet: AI-generated tweet text (hook / first tweet)
             tweet_id: Unique ID for this tweet
             status: Approval status
             created_at: When added to queue
             approved_at: When approved/rejected
             notes: User notes
+            viral_score: AI-predicted viral potential (1-10)
+            tr_thread: Turkish thread tweets list
+            en_thread: English thread tweets list
+            mentions: X handles to mention (e.g. ['@OpenAI', '@sama'])
+            keywords: Trend keywords to weave into text
+            image_url: OG image URL from source article
+            sniper_targets: Big accounts to reply to
         """
         
         self.content_item = content_item
@@ -56,6 +71,13 @@ class ApprovalQueueItem:
         self.created_at = created_at or datetime.now()
         self.approved_at = approved_at
         self.notes = notes
+        self.viral_score = viral_score
+        self.tr_thread = tr_thread or []
+        self.en_thread = en_thread or []
+        self.mentions = mentions or []
+        self.keywords = keywords or []
+        self.image_url = image_url
+        self.sniper_targets = sniper_targets or []
     
     def _generate_id(self) -> str:
         """Generate unique tweet ID"""
@@ -71,6 +93,13 @@ class ApprovalQueueItem:
             'created_at': self.created_at.isoformat(),
             'approved_at': self.approved_at.isoformat() if self.approved_at else None,
             'notes': self.notes,
+            'viral_score': self.viral_score,
+            'tr_thread': self.tr_thread,
+            'en_thread': self.en_thread,
+            'mentions': self.mentions,
+            'keywords': self.keywords,
+            'image_url': self.image_url,
+            'sniper_targets': self.sniper_targets,
             'content_item': {
                 'title': self.content_item.title,
                 'url': self.content_item.url,
@@ -111,7 +140,14 @@ class ApprovalQueueItem:
             status=ApprovalStatus(data['status']),
             created_at=datetime.fromisoformat(data['created_at']),
             approved_at=datetime.fromisoformat(data['approved_at']) if data.get('approved_at') else None,
-            notes=data.get('notes')
+            notes=data.get('notes'),
+            viral_score=data.get('viral_score', 0.0),
+            tr_thread=data.get('tr_thread', []),
+            en_thread=data.get('en_thread', []),
+            mentions=data.get('mentions', []),
+            keywords=data.get('keywords', []),
+            image_url=data.get('image_url'),
+            sniper_targets=data.get('sniper_targets', []),
         )
 
 
@@ -168,6 +204,46 @@ class ApprovalQueue:
         
         return item
     
+    def add_thread(self, content_item: ContentItem, viral_score: float,
+                    tr_thread: List[str], en_thread: List[str],
+                    mentions: Optional[List[str]] = None,
+                    keywords: Optional[List[str]] = None,
+                    image_url: Optional[str] = None,
+                    sniper_targets: Optional[List[Dict]] = None) -> ApprovalQueueItem:
+        """
+        Add viral-scored thread to approval queue.
+        The generated_tweet is set to the first tweet of the TR thread (hook).
+        Now includes visibility data: mentions, keywords, image_url, sniper_targets.
+        """
+        hook = tr_thread[0] if tr_thread else "Thread"
+        item = ApprovalQueueItem(
+            content_item=content_item,
+            generated_tweet=hook,
+            viral_score=viral_score,
+            tr_thread=tr_thread,
+            en_thread=en_thread,
+            mentions=mentions or [],
+            keywords=keywords or [],
+            image_url=image_url,
+            sniper_targets=sniper_targets or [],
+        )
+        self.items[item.tweet_id] = item
+        self._save()
+        logger.info(f"✅ Thread added (score={viral_score}): {item.tweet_id}")
+        return item
+
+    def clear_pending(self):
+        """Clear all pending items (before re-scoring)"""
+        removed = 0
+        to_remove = [tid for tid, item in self.items.items() if item.status == ApprovalStatus.PENDING]
+        for tid in to_remove:
+            del self.items[tid]
+            removed += 1
+        if removed > 0:
+            self._save()
+            logger.info(f"🗑️ Cleared {removed} pending items")
+        return removed
+
     def approve(self, tweet_id: str, notes: Optional[str] = None) -> bool:
         """
         Approve a tweet.

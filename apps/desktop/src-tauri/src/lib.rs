@@ -62,6 +62,11 @@ fn resolve_worker_path() -> PathBuf {
             return prod;
         }
         debug_log(&format!("LOCALAPPDATA={}, prod dir does not exist: {:?}", appdata, prod));
+        // Release build'te dev fallback'e inme: kurulu uygulama her zaman LocalAppData worker kullanmalı.
+        if !cfg!(debug_assertions) {
+            debug_log("Release mode: forcing LocalAppData worker path");
+            return prod;
+        }
     } else {
         debug_log("LOCALAPPDATA env var not found!");
     }
@@ -160,8 +165,44 @@ fn resolve_python_executable(worker_path: &Path) -> (String, Vec<String>) {
     ("python".to_string(), vec![])
 }
 
+#[cfg(target_os = "windows")]
+fn cleanup_backend_processes() {
+        let ps_script = r#"
+Get-CimInstance Win32_Process -Filter "Name='python.exe' or Name='pythonw.exe'" |
+    Where-Object {
+        $_.CommandLine -and (
+            $_.CommandLine -match '-m app\.main' -or
+            $_.CommandLine -match 'run_approval_bot\.py' -or
+            $_.CommandLine -match 'telegram_bot\.py'
+        )
+    } |
+    ForEach-Object {
+        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+    }
+"#;
+
+        let result = Command::new("powershell.exe")
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script])
+                .creation_flags(0x08000000)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+
+        match result {
+                Ok(status) => debug_log(&format!("cleanup_backend_processes finished: {}", status)),
+                Err(e) => debug_log(&format!("cleanup_backend_processes failed: {}", e)),
+        }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn cleanup_backend_processes() {}
+
 fn start_backend() {
     thread::spawn(|| {
+        // Ensure no stale/duplicate backend processes remain
+        cleanup_backend_processes();
+        thread::sleep(Duration::from_millis(500));
+
         // Check if backend is already running
         let check = reqwest::blocking::get("http://127.0.0.1:8765/health");
         if let Ok(resp) = check {
@@ -190,6 +231,18 @@ fn start_backend() {
             if let Err(e) = std::fs::create_dir_all(&worker_path) {
                 debug_log(&format!("Cannot create worker dir {:?}: {}", worker_path, e));
                 return;
+            }
+
+            // Release build'te app/main.py yoksa net hata ver (sessizce repo fallback olmasın)
+            if !cfg!(debug_assertions) {
+                let entrypoint = worker_path.join("app").join("main.py");
+                if !entrypoint.exists() {
+                    debug_log(&format!(
+                        "Backend start aborted: missing {:?}. Installer worker files are incomplete.",
+                        entrypoint
+                    ));
+                    return;
+                }
             }
 
             // Log dosyalarını oluştur — panic yerine graceful hata
@@ -258,6 +311,12 @@ fn start_backend() {
         }
         debug_log("Backend failed to start after 60s - check backend_stderr.log");
     });
+}
+
+#[tauri::command]
+fn shutdown_backend_processes() -> Result<String, String> {
+    cleanup_backend_processes();
+    Ok("backend processes cleaned".to_string())
 }
 
 #[tauri::command]
@@ -344,7 +403,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             check_worker_health,
-            call_worker_api
+            call_worker_api,
+            shutdown_backend_processes
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

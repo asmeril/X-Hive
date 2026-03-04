@@ -1,107 +1,78 @@
 import React, { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-interface DaemonStatus {
+interface SystemStatus {
   status: string;
-  uptime?: number;
-  active_tasks?: number;
-  completed_tasks?: number;
-  chrome_pool?: {
-    active: number;
-    idle: number;
-    total: number;
-  };
-}
-
-interface DaemonApiResponse {
-  status: string;
-  daemon?: {
-    daemon_status?: string;
-    uptime_seconds?: number;
-    queue_stats?: {
-      running?: number;
-      completed?: number;
-      active_count?: number;
-      completed_count?: number;
+  services: {
+    orchestrator: {
+      running: boolean;
+      ai_enabled: boolean;
+      intel_enabled: boolean;
     };
-    chrome_pool_healthy?: boolean;
+    task_queue: {
+      running: boolean;
+      stats: {
+        active_count: number;
+        completed_count: number;
+      };
+    };
+    chrome_pool: {
+      running: boolean;
+      healthy: boolean;
+    };
+    x_daemon: {
+      daemon_status: string;
+      uptime_seconds: number;
+    };
+    scheduler: {
+      running: boolean;
+    };
   };
 }
 
 const XDaemonMonitor: React.FC = () => {
-  const [status, setStatus] = useState<DaemonStatus | null>(null);
+  const [status, setStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [autoStartTried, setAutoStartTried] = useState(false);
+  const [isForceIntelLoading, setIsForceIntelLoading] = useState(false);
   const userStoppedRef = useRef(false);
 
   const fetchStatus = async () => {
     try {
       setLoading(true);
+      
       const response = await invoke<string>("call_worker_api", {
         method: "GET",
-        endpoint: "/daemon/status",
+        endpoint: "/system/status",
       });
-      const parsed: DaemonApiResponse & any = JSON.parse(response);
+      const parsed: SystemStatus | any = JSON.parse(response);
 
-      const daemonNode = parsed.daemon || parsed;
-
-      const daemonStatus: DaemonStatus = {
-        status: daemonNode.daemon_status || parsed.status || "stopped",
-        uptime: daemonNode.uptime_seconds || parsed.uptime || 0,
-        active_tasks:
-          daemonNode.queue_stats?.running ||
-          daemonNode.queue_stats?.active_count ||
-          parsed.active_tasks ||
-          0,
-        completed_tasks:
-          daemonNode.queue_stats?.completed ||
-          daemonNode.queue_stats?.completed_count ||
-          parsed.completed_tasks ||
-          0,
-        chrome_pool: {
-          active: daemonNode.chrome_pool_healthy ? 1 : 0,
-          idle: 0,
-          total: daemonNode.chrome_pool_healthy ? 1 : 0,
-        },
-      };
-
-      setStatus(daemonStatus);
+      if (parsed.status === "ok") {
+        setStatus(parsed);
+      } else {
+        // Fallback or error state
+        setError("API yanitinda hata: " + parsed.message);
+      }
+      
       setError(null);
 
-      if (daemonStatus.status !== "running" && !autoStartTried && !userStoppedRef.current) {
-        setAutoStartTried(true);
-        await invoke<string>("call_worker_api", {
-          method: "POST",
-          endpoint: "/daemon/start",
-        });
-        const retryResponse = await invoke<string>("call_worker_api", {
-          method: "GET",
-          endpoint: "/daemon/status",
-        });
-        const retryParsed: DaemonApiResponse & any = JSON.parse(retryResponse);
-        const retryDaemonNode = retryParsed.daemon || retryParsed;
-        setStatus((prev) => ({
-          ...(prev || { status: "stopped" }),
-          status: retryDaemonNode.daemon_status || retryParsed.status || "stopped",
-          uptime: retryDaemonNode.uptime_seconds || retryParsed.uptime || 0,
-          active_tasks:
-            retryDaemonNode.queue_stats?.running ||
-            retryDaemonNode.queue_stats?.active_count ||
-            retryParsed.active_tasks ||
-            0,
-          completed_tasks:
-            retryDaemonNode.queue_stats?.completed ||
-            retryDaemonNode.queue_stats?.completed_count ||
-            retryParsed.completed_tasks ||
-            0,
-          chrome_pool: {
-            active: retryDaemonNode.chrome_pool_healthy ? 1 : 0,
-            idle: 0,
-            total: retryDaemonNode.chrome_pool_healthy ? 1 : 0,
-          },
-        }));
+      if (!parsed.services?.x_daemon?.daemon_status || parsed.services.x_daemon.daemon_status !== "running") {
+        if (!autoStartTried && !userStoppedRef.current) {
+          setAutoStartTried(true);
+          await invoke<string>("call_worker_api", {
+            method: "POST",
+            endpoint: "/daemon/start",
+          });
+          // Retry
+          const retryResponse = await invoke<string>("call_worker_api", {
+            method: "GET",
+            endpoint: "/system/status",
+          });
+          const retryParsed = JSON.parse(retryResponse);
+          if (retryParsed.status === "ok") setStatus(retryParsed);
+        }
       }
     } catch (e: any) {
       console.error("Status fetch error:", e);
@@ -151,6 +122,26 @@ const XDaemonMonitor: React.FC = () => {
     }
   };
 
+  const forceIntelCollection = async () => {
+    try {
+      setIsForceIntelLoading(true);
+      const response = await invoke<string>("call_worker_api", {
+        method: "POST",
+        endpoint: "/system/force-intel",
+      });
+      const parsed = JSON.parse(response);
+      if (parsed.status === "ok") {
+        alert(parsed.message || "Haber toplama manuel olarak başlatıldı.");
+      } else {
+        setError(parsed.message || "Başlatılamadı");
+      }
+    } catch (e: any) {
+      setError(typeof e === "string" ? e : e?.message || JSON.stringify(e));
+    } finally {
+      setIsForceIntelLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
   }, []);
@@ -163,14 +154,20 @@ const XDaemonMonitor: React.FC = () => {
   }, [autoRefresh]);
 
   const formatUptime = (seconds: number): string => {
+    if (!seconds) return "0s";
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    
+
     if (hours > 0) return `${hours}s ${minutes}d ${secs}s`;
     if (minutes > 0) return `${minutes}d ${secs}s`;
     return `${secs}s`;
   };
+
+  const isOrchestratorRunning = status?.services?.orchestrator?.running;
+  const isAiEnabled = status?.services?.orchestrator?.ai_enabled;
+  const isSchedulerRunning = status?.services?.scheduler?.running;
+  const isChromeHealthy = status?.services?.chrome_pool?.healthy;
 
   return (
     <div style={{
@@ -188,7 +185,7 @@ const XDaemonMonitor: React.FC = () => {
           marginBottom: "24px"
         }}>
           <h1 style={{ fontSize: "28px", fontWeight: "bold" }}>
-            🤖 X-Daemon İzleme
+            🤖 X-Hive Sistem İzleme (Tüm Servisler)
           </h1>
           <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
             <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
@@ -239,15 +236,36 @@ const XDaemonMonitor: React.FC = () => {
           gap: "16px",
           marginBottom: "24px"
         }}>
-          {/* Daemon Status Card */}
+          {/* Orchestrator Status Card */}
           <div style={{
             backgroundColor: "#1e293b",
             border: "1px solid #334155",
             borderRadius: "12px",
             padding: "20px"
           }}>
-            <div style={{ fontSize: "14px", color: "#94a3b8", marginBottom: "8px" }}>
-              Daemon Durumu
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <div style={{ fontSize: "14px", color: "#94a3b8" }}>
+                🛠️ Ana Orkestratör
+              </div>
+              <button
+                onClick={forceIntelCollection}
+                disabled={!isOrchestratorRunning || isForceIntelLoading}
+                style={{
+                  padding: "4px 8px",
+                  borderRadius: "6px",
+                  border: "none",
+                  backgroundColor: !isOrchestratorRunning || isForceIntelLoading ? "#374151" : "#8b5cf6",
+                  color: "white",
+                  cursor: !isOrchestratorRunning || isForceIntelLoading ? "not-allowed" : "pointer",
+                  fontSize: "11px",
+                  fontWeight: "bold",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px"
+                }}
+              >
+                {isForceIntelLoading ? "⏳ Başlıyor" : "🔍 Hemen Tarama Başlat"}
+              </button>
             </div>
             <div style={{
               fontSize: "24px",
@@ -260,13 +278,100 @@ const XDaemonMonitor: React.FC = () => {
                 width: "12px",
                 height: "12px",
                 borderRadius: "50%",
-                backgroundColor: status?.status === "running" ? "#10b981" : "#ef4444"
+                backgroundColor: isOrchestratorRunning ? "#10b981" : "#ef4444"
               }} />
-              {loading ? "..." : status?.status === "running" ? "Çalışıyor" : "Durdu"}
+              {loading ? "..." : isOrchestratorRunning ? "Çalışıyor" : "Durdu"}
             </div>
-            {status?.uptime && (
+            <div style={{ fontSize: "14px", color: "#94a3b8", marginTop: "8px" }}>
+              📡 Haber Toplayıcı: Aktif
+            </div>
+          </div>
+
+          {/* AI Generator Card */}
+          <div style={{
+            backgroundColor: "#1e293b",
+            border: "1px solid #334155",
+            borderRadius: "12px",
+            padding: "20px"
+          }}>
+            <div style={{ fontSize: "14px", color: "#94a3b8", marginBottom: "8px" }}>
+              🧠 Yapay Zeka (AI) Motoru
+            </div>
+            <div style={{
+              fontSize: "24px",
+              fontWeight: "bold",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px"
+            }}>
+              <span style={{
+                width: "12px",
+                height: "12px",
+                borderRadius: "50%",
+                backgroundColor: isAiEnabled ? "#10b981" : "#ef4444"
+              }} />
+              {loading ? "..." : isAiEnabled ? "Aktif" : "Devre Dışı"}
+            </div>
+            <div style={{ fontSize: "14px", color: "#94a3b8", marginTop: "8px" }}>
+              🤖 İçerikler Tweet'e Çevriliyor
+            </div>
+          </div>
+
+          {/* Post Scheduler Card */}
+          <div style={{
+            backgroundColor: "#1e293b",
+            border: "1px solid #334155",
+            borderRadius: "12px",
+            padding: "20px"
+          }}>
+            <div style={{ fontSize: "14px", color: "#94a3b8", marginBottom: "8px" }}>
+              📅 Paylaşım Zamanlayıcı
+            </div>
+            <div style={{
+              fontSize: "24px",
+              fontWeight: "bold",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px"
+            }}>
+              <span style={{
+                width: "12px",
+                height: "12px",
+                borderRadius: "50%",
+                backgroundColor: isSchedulerRunning ? "#10b981" : "#b45309"
+              }} />
+              {loading ? "..." : isSchedulerRunning ? "Aktif" : "Beklemede"}
+            </div>
+          </div>
+          
+          {/* Daemon Status Card */}
+          <div style={{
+            backgroundColor: "#1e293b",
+            border: "1px solid #334155",
+            borderRadius: "12px",
+            padding: "20px"
+          }}>
+            <div style={{ fontSize: "14px", color: "#94a3b8", marginBottom: "8px" }}>
+              🐦 X-Daemon (Tarayıcı İşçisi)
+            </div>
+            <div style={{
+              fontSize: "24px",
+              fontWeight: "bold",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px"
+            }}>
+              <span style={{
+                width: "12px",
+                height: "12px",
+                borderRadius: "50%",
+                backgroundColor: status?.services?.x_daemon?.daemon_status === "running" ? "#10b981" : "#ef4444"
+              }} />
+              {loading ? "..." : status?.services?.x_daemon?.daemon_status === "running" ? "Çalışıyor" : "Durdu"}
+            </div>
+            {status?.services?.x_daemon?.uptime_seconds !== undefined && (
               <div style={{ fontSize: "14px", color: "#94a3b8", marginTop: "8px" }}>
-                ⏱️ Çalışma süresi: {formatUptime(status.uptime)}
+                ⏱️ Çalışma süresi: {formatUptime(status.services.x_daemon.uptime_seconds)}
               </div>
             )}
           </div>
@@ -279,13 +384,13 @@ const XDaemonMonitor: React.FC = () => {
             padding: "20px"
           }}>
             <div style={{ fontSize: "14px", color: "#94a3b8", marginBottom: "8px" }}>
-              Aktif Görevler
+              Görev Kuyruğu (Task Queue)
             </div>
             <div style={{ fontSize: "32px", fontWeight: "bold", color: "#3b82f6" }}>
-              {loading ? "..." : status?.active_tasks || 0}
+              {loading ? "..." : status?.services?.task_queue?.stats?.active_count || 0}
             </div>
             <div style={{ fontSize: "14px", color: "#94a3b8", marginTop: "8px" }}>
-              📊 Tamamlanan: {status?.completed_tasks || 0}
+              📊 Tamamlanan: {status?.services?.task_queue?.stats?.completed_count || 0}
             </div>
           </div>
 
@@ -297,13 +402,10 @@ const XDaemonMonitor: React.FC = () => {
             padding: "20px"
           }}>
             <div style={{ fontSize: "14px", color: "#94a3b8", marginBottom: "8px" }}>
-              Chrome Havuzu
+              Görünmez Tarayıcı (Headless Chrome)
             </div>
-            <div style={{ fontSize: "32px", fontWeight: "bold", color: "#10b981" }}>
-              {loading ? "..." : status?.chrome_pool?.active || 0}/{status?.chrome_pool?.total || 0}
-            </div>
-            <div style={{ fontSize: "14px", color: "#94a3b8", marginTop: "8px" }}>
-              💤 Boşta: {status?.chrome_pool?.idle || 0}
+            <div style={{ fontSize: "24px", fontWeight: "bold", color: "#10b981" }}>
+              {loading ? "..." : (isChromeHealthy ? "Sağlıklı ✅" : "Sorunlu ❌")}
             </div>
           </div>
         </div>
@@ -321,15 +423,15 @@ const XDaemonMonitor: React.FC = () => {
           <div style={{ display: "flex", gap: "12px" }}>
             <button
               onClick={startDaemon}
-              disabled={status?.status === "running"}
+              disabled={status?.services?.x_daemon?.daemon_status === "running"}
               style={{
                 flex: 1,
                 padding: "12px 24px",
                 borderRadius: "8px",
                 border: "none",
-                backgroundColor: status?.status === "running" ? "#374151" : "#10b981",
+                backgroundColor: status?.services?.x_daemon?.daemon_status === "running" ? "#374151" : "#10b981",
                 color: "white",
-                cursor: status?.status === "running" ? "not-allowed" : "pointer",
+                cursor: status?.services?.x_daemon?.daemon_status === "running" ? "not-allowed" : "pointer",
                 fontSize: "16px",
                 fontWeight: "600"
               }}
@@ -338,15 +440,15 @@ const XDaemonMonitor: React.FC = () => {
             </button>
             <button
               onClick={stopDaemon}
-              disabled={status?.status !== "running"}
+              disabled={status?.services?.x_daemon?.daemon_status !== "running"}
               style={{
                 flex: 1,
                 padding: "12px 24px",
                 borderRadius: "8px",
                 border: "none",
-                backgroundColor: status?.status !== "running" ? "#374151" : "#ef4444",
+                backgroundColor: status?.services?.x_daemon?.daemon_status !== "running" ? "#374151" : "#ef4444",
                 color: "white",
-                cursor: status?.status !== "running" ? "not-allowed" : "pointer",
+                cursor: status?.services?.x_daemon?.daemon_status !== "running" ? "not-allowed" : "pointer",
                 fontSize: "16px",
                 fontWeight: "600"
               }}
