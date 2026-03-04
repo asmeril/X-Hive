@@ -1,9 +1,9 @@
-$ErrorActionPreference = 'Stop'
-
 param(
     [string]$SetupPath,
     [switch]$Silent
 )
+
+$ErrorActionPreference = 'Stop'
 
 $appName = 'XHive'
 $installerDir = 'C:\XHive\X-Hive\installer\output'
