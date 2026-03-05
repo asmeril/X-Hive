@@ -713,6 +713,106 @@ class XDaemon:
             return page.url
         return None
 
+    async def get_latest_tweet_url(self, username: str) -> Dict:
+        """
+        Resolve latest tweet URL from a user's profile timeline.
+
+        Args:
+            username: X handle with or without @ prefix
+
+        Returns:
+            dict: {
+                "success": bool,
+                "tweet_url": str (if found),
+                "error": str (if failed)
+            }
+        """
+        try:
+            clean_username = (username or "").strip().lstrip("@")
+            if not clean_username:
+                return {
+                    "success": False,
+                    "error": "Username is empty",
+                }
+
+            latest_context = await self.get_latest_tweet_context(clean_username)
+            tweet_url = latest_context.get("tweet_url", "")
+            if not tweet_url or "/status/" not in tweet_url:
+                return {
+                    "success": False,
+                    "error": f"No tweet URL found for @{clean_username}",
+                }
+
+            return {
+                "success": True,
+                "tweet_url": tweet_url,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to resolve latest tweet URL for @{username}: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    async def get_latest_tweet_context(self, username: str) -> Dict:
+        """
+        Resolve latest tweet URL and visible text from a user's profile timeline.
+
+        Args:
+            username: X handle with or without @ prefix
+
+        Returns:
+            dict: {
+                "success": bool,
+                "tweet_url": str,
+                "tweet_text": str,
+                "error": str (if failed)
+            }
+        """
+        try:
+            clean_username = (username or "").strip().lstrip("@")
+            if not clean_username:
+                return {
+                    "success": False,
+                    "error": "Username is empty",
+                }
+
+            page = await self.chrome_pool.get_page()
+            await self.chrome_pool.load_cookies()
+
+            profile_url = f"https://x.com/{clean_username}"
+            await page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(2.0)
+
+            tweet_url = await self._extract_latest_tweet_url(page)
+            if not tweet_url or "/status/" not in tweet_url:
+                return {
+                    "success": False,
+                    "error": f"No tweet URL found for @{clean_username}",
+                }
+
+            tweet_text = ""
+            try:
+                text_locator = page.locator("article[data-testid='tweet'] div[data-testid='tweetText']").first
+                await text_locator.wait_for(state="visible", timeout=5000)
+                tweet_text = (await text_locator.inner_text() or "").strip()
+            except Exception:
+                tweet_text = ""
+
+            return {
+                "success": True,
+                "tweet_url": tweet_url,
+                "tweet_text": tweet_text,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to resolve latest tweet context for @{username}: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
     async def _post_reply_in_thread(self, parent_tweet_url: str, text: str) -> Dict:
         """
         Post a reply to a specific tweet URL for thread chaining.

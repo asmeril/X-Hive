@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from intel.base_source import ContentItem
+from interaction_tracker import get_interaction_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +267,14 @@ class ApprovalQueue:
         item.notes = notes
         
         self._save()
+        get_interaction_tracker().record_event(
+            action="approval",
+            status="approved",
+            item_id=tweet_id,
+            source="approval_queue",
+            details={"notes": notes or ""},
+            viral_score=float(item.viral_score or 0),
+        )
         
         logger.info(f"✅ Tweet approved: {tweet_id}")
         
@@ -293,6 +302,14 @@ class ApprovalQueue:
         item.notes = reason
         
         self._save()
+        get_interaction_tracker().record_event(
+            action="approval",
+            status="rejected",
+            item_id=tweet_id,
+            source="approval_queue",
+            details={"reason": reason or ""},
+            viral_score=float(item.viral_score or 0),
+        )
         
         logger.info(f"❌ Tweet rejected: {tweet_id}")
         

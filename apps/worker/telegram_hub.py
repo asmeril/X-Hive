@@ -16,6 +16,9 @@ import os
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from dotenv import load_dotenv
+from interaction_tracker import get_interaction_tracker
+from sniper_guard import build_focus_keywords, is_relevant_for_sniper
+from config import settings
 
 load_dotenv()
 
@@ -107,6 +110,7 @@ class TelegramHub:
             self.application.add_handler(CommandHandler("status", self._cmd_status))
             self.application.add_handler(CommandHandler("scan", self._cmd_scan))
             self.application.add_handler(CommandHandler("pending", self._cmd_pending))
+            self.application.add_handler(CommandHandler("analytics", self._cmd_analytics))
             self.application.add_handler(CommandHandler("help", self._cmd_help))
             
             # ── Buton callback'leri ──
@@ -127,6 +131,7 @@ class TelegramHub:
                 "Kullanılabilir komutlar:\n"
                 "/pending — Bekleyen thread'leri gör\n"
                 "/scan — Yeni tarama başlat\n"
+                "/analytics — Sonuç dashboard'u\n"
                 "/status — Sistem durumu\n"
                 "/help — Yardım",
                 parse_mode=ParseMode.MARKDOWN_V2
@@ -371,6 +376,7 @@ class TelegramHub:
             "*Komutlar:*\n"
             "📋 /pending — Bekleyen thread'leri gör ve onayla\n"
             "🔍 /scan — Yeni içerik taraması başlat\n"
+            "📈 /analytics — Sonuç dashboard'u\n"
             "📊 /status — Sistem durumu\n"
             "❓ /help — Detaylı yardım\n\n"
             "_Thread'ler hazır olduğunda burada bildirim alacaksınız\\!_",
@@ -397,6 +403,34 @@ class TelegramHub:
             "• Hata oluştu 🚨",
             parse_mode=ParseMode.MARKDOWN_V2
         )
+
+    async def _cmd_analytics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /analytics — Sonuç dashboard özetini gönder"""
+        try:
+            from approval.approval_queue import approval_queue
+            tracker = get_interaction_tracker()
+            dashboard = tracker.build_dashboard(approval_queue=approval_queue, limit=12)
+
+            kpis = dashboard.get("kpis", {})
+            queue = dashboard.get("queue", {})
+            viral_proxy = dashboard.get("viral_proxy", {})
+
+            text = (
+                "📈 *X\\-Hive Analytics*\n\n"
+                f"🧵 Thread başarı \(24s\): *{kpis.get('thread_success_24h', 0)}* "
+                f"/ ❌ *{kpis.get('thread_failed_24h', 0)}*\n"
+                f"🎯 Sniper başarı \(24s\): *{kpis.get('sniper_success_24h', 0)}* "
+                f"/ ❌ *{kpis.get('sniper_failed_24h', 0)}*\n"
+                f"✅ Onay \(24s\): *{kpis.get('approvals_24h', 0)}* | "
+                f"⛔ Red: *{kpis.get('rejections_24h', 0)}*\n\n"
+                f"📦 Queue: Toplam *{queue.get('total', 0)}* | "
+                f"Bekleyen *{queue.get('pending', 0)}* | "
+                f"İşlenen *{queue.get('processed', 0)}*\n"
+                f"🔥 Avg Processed Score: *{viral_proxy.get('avg_processed_score', 0)}*"
+            )
+            await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+        except Exception as e:
+            await update.message.reply_text(f"❌ Analytics alınamadı: {e}")
     
     async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status — Sistem durumunu göster"""
@@ -515,6 +549,7 @@ class TelegramHub:
         
         try:
             from approval.approval_queue import approval_queue, ApprovalStatus
+            tracker = get_interaction_tracker()
             
             if tweet_id not in approval_queue.items:
                 await query.edit_message_text("⚠️ Bu thread artık mevcut değil veya işlendi.")
@@ -544,6 +579,15 @@ class TelegramHub:
                 if not thread:
                     await query.edit_message_text(f"⚠️ {lang.upper()} thread boş!")
                     return
+
+                tracker.record_event(
+                    action="thread_publish",
+                    status="started",
+                    item_id=tweet_id,
+                    source="telegram",
+                    details={"language": lang, "tweet_count": len(thread)},
+                    viral_score=float(getattr(item, "viral_score", 0) or 0),
+                )
                 
                 await query.edit_message_text(
                     f"🚀 *{lang.upper()} Thread yayınlanıyor\\.\\.\\.* \\({len(thread)} tweet\\)",
@@ -565,20 +609,63 @@ class TelegramHub:
             elif action == "sniper":
                 sniper_targets = getattr(item, 'sniper_targets', [])
                 if not sniper_targets:
+                    tracker.record_event(
+                        action="sniper",
+                        status="no_targets",
+                        item_id=tweet_id,
+                        source="telegram",
+                        details={},
+                        viral_score=float(getattr(item, "viral_score", 0) or 0),
+                    )
                     await query.edit_message_text("⚠️ Bu içerik için sniper hedefi bulunamadı.")
                     return
                 
                 targets = [t.get("handle", t.get("username", "?")) for t in sniper_targets[:3]]
+                keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ Sniper Onayla", callback_data=f"sniper_confirm:{tweet_id}"),
+                        InlineKeyboardButton("❌ İptal", callback_data=f"sniper_cancel:{tweet_id}"),
+                    ]
+                ])
+
                 await query.edit_message_text(
-                    f"🎯 *Sniper Reply başlatılıyor\\.\\.\\.*\n"
-                    f"Hedefler: {', '.join(self._escape_md(t) for t in targets)}",
+                    f"🎯 *Sniper Reply hazır*\n"
+                    f"Hedefler: {', '.join(self._escape_md(t) for t in targets)}\n\n"
+                    f"Gerçek reply gönderimi için onaylayın\.",
+                    reply_markup=keyboard,
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
-                
-                # Background'da sniper reply çalıştır
+
+            elif action == "sniper_confirm":
+                sniper_targets = getattr(item, 'sniper_targets', [])
+                tracker.record_event(
+                    action="sniper",
+                    status="started",
+                    item_id=tweet_id,
+                    source="telegram",
+                    details={"target_count": len(sniper_targets[:3])},
+                    viral_score=float(getattr(item, "viral_score", 0) or 0),
+                )
+
+                await query.edit_message_text(
+                    "✅ *Sniper onaylandı*\. Gerçek reply gönderimi başlatılıyor\.\.\.",
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+
                 asyncio.create_task(
                     self._run_sniper_and_notify(tweet_id, update.effective_chat.id)
                 )
+
+            elif action == "sniper_cancel":
+                tracker.record_event(
+                    action="sniper",
+                    status="cancelled",
+                    item_id=tweet_id,
+                    source="telegram",
+                    details={},
+                    viral_score=float(getattr(item, "viral_score", 0) or 0),
+                )
+                await query.edit_message_text("🛑 Sniper işlemi iptal edildi.")
             
             else:
                 logger.warning(f"Unknown callback action: {action}")
@@ -602,10 +689,12 @@ class TelegramHub:
         try:
             from x_daemon import XDaemon
             from approval.approval_queue import approval_queue, ApprovalStatus
+            tracker = get_interaction_tracker()
             
             x_daemon = XDaemon()
             previous_url = None
             first_tweet_url = None
+            failed_step = 0
             
             # Mention'ları ilk tweet'e ekle
             if mentions:
@@ -633,12 +722,29 @@ class TelegramHub:
                     
                 except Exception as e:
                     logger.error(f"❌ Thread tweet {i+1} failed: {e}")
+                    failed_step = i + 1
+                    tracker.record_event(
+                        action="thread_publish",
+                        status="failed",
+                        item_id=tweet_id,
+                        source="telegram",
+                        details={"failed_step": i + 1, "error": str(e)},
+                    )
                     break
             
             # Status güncelle
-            if tweet_id in approval_queue.items:
+            if tweet_id in approval_queue.items and failed_step == 0:
+                item = approval_queue.items[tweet_id]
                 approval_queue.items[tweet_id].status = ApprovalStatus.PROCESSED
                 approval_queue._save()
+                tracker.record_event(
+                    action="thread_publish",
+                    status="success",
+                    item_id=tweet_id,
+                    source="telegram",
+                    details={"tweet_count": len(thread), "tweet_url": first_tweet_url or ""},
+                    viral_score=float(getattr(item, "viral_score", 0) or 0),
+                )
             
             # Admin'e bildir
             notify_chat = chat_id or self.admin_chat_id
@@ -661,6 +767,13 @@ class TelegramHub:
             
         except Exception as e:
             logger.error(f"❌ Post & notify failed: {e}")
+            get_interaction_tracker().record_event(
+                action="thread_publish",
+                status="failed",
+                item_id=tweet_id,
+                source="telegram",
+                details={"error": str(e)},
+            )
             if chat_id:
                 await self._safe_send(chat_id, f"❌ Thread yayınlanamadı: {e}")
     
@@ -669,14 +782,23 @@ class TelegramHub:
         try:
             from approval.approval_queue import approval_queue
             from ai_content_generator import get_ai_generator
+            from x_daemon import XDaemon
+            tracker = get_interaction_tracker()
             
             item = approval_queue.items.get(tweet_id)
             if not item:
                 return
             
             ai = get_ai_generator()
+            x_daemon = XDaemon()
             targets = getattr(item, 'sniper_targets', [])[:3]
             sent = 0
+            skipped_unrelated = 0
+            skipped_missing_url = 0
+            focus_keywords = build_focus_keywords(
+                title=item.content_item.title,
+                body=item.generated_tweet[:300],
+            )
             
             for target in targets:
                 username = target.get("username", "")
@@ -698,9 +820,33 @@ Kurallar:
 - Sadece reply metnini döndür
 """
                     reply_text = await ai._generate_with_retry(reply_prompt, max_retries=2)
-                    
-                    # TODO: Target'ın son tweetini bul ve reply at
-                    logger.info(f"🎯 Sniper reply ready for @{username}: {reply_text[:80]}...")
+
+                    target_tweet_url = target.get("tweet_url") or target.get("url")
+                    if not target_tweet_url and settings.SNIPER_ALLOW_FALLBACK:
+                        latest_context = await x_daemon.get_latest_tweet_context(username)
+                        if latest_context.get("success"):
+                            target_tweet_url = latest_context.get("tweet_url", "")
+                            latest_text = latest_context.get("tweet_text", "")
+                            relevant, score, _ = is_relevant_for_sniper(latest_text, focus_keywords, minimum_hits=2)
+                            if not relevant:
+                                skipped_unrelated += 1
+                                logger.info(f"⏭️ Sniper skip @{username}: unrelated latest tweet (score={score})")
+                                continue
+
+                    if not target_tweet_url or "/status/" not in target_tweet_url:
+                        skipped_missing_url += 1
+                        logger.warning(f"⚠️ Sniper tweet URL bulunamadı: @{username}")
+                        continue
+
+                    result = await x_daemon.reply_to_tweet(
+                        tweet_url=target_tweet_url,
+                        text=reply_text,
+                    )
+                    if not result.get("success"):
+                        logger.warning(f"⚠️ Sniper reply failed for @{username}: {result.get('error')}")
+                        continue
+
+                    logger.info(f"🎯 Sniper reply sent for @{username}: {reply_text[:80]}...")
                     await self.notify_sniper_sent(username, reply_text)
                     sent += 1
                     
@@ -710,12 +856,35 @@ Kurallar:
             
             await self._safe_send(
                 chat_id,
-                f"🎯 *Sniper Reply tamamlandı:* {sent}/{len(targets)} gönderildi",
+                f"🎯 *Sniper Reply tamamlandı:* {sent}/{len(targets)} gönderildi"
+                f"\n⏭️ İlgisiz olduğu için atlanan: {skipped_unrelated}"
+                f"\n🔒 URL yok/fallback kapalı olduğu için atlanan: {skipped_missing_url}",
                 parse_mode=ParseMode.MARKDOWN_V2
+            )
+            tracker.record_event(
+                action="sniper",
+                status="success",
+                item_id=tweet_id,
+                source="telegram",
+                details={
+                    "sent_count": sent,
+                    "target_count": len(targets),
+                    "skipped_unrelated": skipped_unrelated,
+                    "skipped_missing_url": skipped_missing_url,
+                    "fallback_enabled": bool(settings.SNIPER_ALLOW_FALLBACK),
+                },
+                viral_score=float(getattr(item, "viral_score", 0) or 0),
             )
             
         except Exception as e:
             logger.error(f"❌ Sniper & notify failed: {e}")
+            get_interaction_tracker().record_event(
+                action="sniper",
+                status="failed",
+                item_id=tweet_id,
+                source="telegram",
+                details={"error": str(e)},
+            )
             await self._safe_send(chat_id, f"❌ Sniper reply hatası: {e}")
     
     # ═══════════════════════════════════════════════════════

@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import "./App.css";
 import XDaemonMonitor from "./components/XDaemonMonitor";
 import XOperations from "./components/XOperations";
 import ApprovalInterface from "./components/ApprovalInterface";
+import OutcomeTracker from "./components/OutcomeTracker";
+import SettingsPanel from "./components/SettingsPanel";
 
 type HealthResponse = {
   status: string;
@@ -19,7 +22,20 @@ function App() {
   const [data, setData] = useState<HealthResponse | ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"monitor" | "operations" | "approval" | "health" | "lock">("monitor");
+  const [activeTab, setActiveTab] = useState<"monitor" | "operations" | "approval" | "results" | "settings" | "health" | "lock">("monitor");
+  const [appVersion, setAppVersion] = useState<string>("-");
+
+  useEffect(() => {
+    const loadVersion = async () => {
+      try {
+        const version = await getVersion();
+        setAppVersion(version);
+      } catch {
+        setAppVersion("unknown");
+      }
+    };
+    loadVersion();
+  }, []);
 
   const checkHealth = async () => {
     setLoading(true);
@@ -71,6 +87,9 @@ function App() {
             <h1 style={{ margin: 0, marginRight: "24px", fontSize: "20px", fontWeight: 700, color: "#f3f4f6" }}>
               X-HIVE Kontrol Paneli
             </h1>
+            <span style={{ color: "#94a3b8", fontSize: "12px", marginRight: "14px" }}>
+              v{appVersion}
+            </span>
             <button
               onClick={() => setActiveTab("monitor")}
               style={{
@@ -120,6 +139,38 @@ function App() {
               ⚙️ İşlemler
             </button>
             <button
+              onClick={() => setActiveTab("results")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "6px",
+                border: "none",
+                backgroundColor: activeTab === "results" ? "#3b82f6" : "#374151",
+                color: "white",
+                fontSize: "14px",
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "background-color 0.2s ease",
+              }}
+            >
+              📈 Sonuçlar
+            </button>
+            <button
+              onClick={() => setActiveTab("settings")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "6px",
+                border: "none",
+                backgroundColor: activeTab === "settings" ? "#3b82f6" : "#374151",
+                color: "white",
+                fontSize: "14px",
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "background-color 0.2s ease",
+              }}
+            >
+              ⚙️ Ayarlar
+            </button>
+            <button
               onClick={() => setActiveTab("health")}
               style={{
                 padding: "8px 16px",
@@ -164,6 +215,10 @@ function App() {
         <div style={{ padding: "24px", backgroundColor: "#0f172a", minHeight: "calc(100vh - 73px)" }}>
           <XOperations />
         </div>
+      ) : activeTab === "results" ? (
+        <OutcomeTracker />
+      ) : activeTab === "settings" ? (
+        <SettingsPanel />
       ) : (
         <div
           style={{

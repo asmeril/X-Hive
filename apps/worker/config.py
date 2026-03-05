@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # Application Settings
     WORKER_PORT: int = 8765
     CHROME_HEADLESS: bool = False
+    SNIPER_ALLOW_FALLBACK: bool = False
     
     # Telegram Configuration
     TELEGRAM_BOT_TOKEN: str = ""
@@ -94,6 +95,7 @@ BROWSER_DATA_DIR = settings.BROWSER_DATA_DIR
 COOKIE_PATH = settings.COOKIE_PATH
 WORKER_PORT = settings.WORKER_PORT
 CHROME_HEADLESS = settings.CHROME_HEADLESS
+SNIPER_ALLOW_FALLBACK = settings.SNIPER_ALLOW_FALLBACK
 
 # Validate Telegram config
 if not TELEGRAM_BOT_TOKEN:

@@ -6,6 +6,9 @@ Enhanced with comprehensive safety systems.
 import asyncio
 import sys
 import io
+import os
+import json
+from pathlib import Path
 
 # Force UTF-8 encoding for stdout/stderr on Windows to avoid Unicode errors
 if sys.platform == "win32":
@@ -35,6 +38,8 @@ from safety_logger import get_safety_logger
 
 # Approval queue for content items
 from approval.approval_queue import approval_queue
+from interaction_tracker import get_interaction_tracker
+from sniper_guard import build_focus_keywords, is_relevant_for_sniper
 
 # Global Orchestrator instance
 from orchestrator import orchestrator as global_orchestrator
@@ -252,6 +257,99 @@ class ApprovalActionRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class XAccountProfile(BaseModel):
+    name: str
+    username: str
+    cookie_path: str
+    enabled: bool = True
+
+
+class SettingsUpdateRequest(BaseModel):
+    gemini_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+    telegram_channel_id: Optional[str] = None
+    telegram_group_id: Optional[str] = None
+    sniper_allow_fallback: Optional[bool] = None
+    x_accounts: Optional[List[XAccountProfile]] = None
+    active_x_account: Optional[str] = None
+    apply_active_account_cookie: bool = True
+
+
+def _resolve_env_file_path() -> Path:
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    appdata_env = Path(os.environ.get("LOCALAPPDATA", "")) / "XHive" / "worker" / ".env"
+    if appdata_env.exists():
+        return appdata_env
+    return env_path
+
+
+def _parse_bool_env(value: Optional[str], default: bool = False) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def _upsert_env_values(env_path: Path, updates: Dict[str, str]) -> None:
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    if not env_path.exists():
+        env_path.write_text("", encoding="utf-8")
+
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+    changed = set()
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in updates:
+            lines[index] = f"{key}={updates[key]}"
+            changed.add(key)
+
+    for key, value in updates.items():
+        if key not in changed:
+            lines.append(f"{key}={value}")
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _load_x_accounts() -> List[Dict[str, str]]:
+    raw = os.environ.get("X_ACCOUNTS_JSON", "")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _apply_active_account_cookie(active_name: str, x_accounts: List[Dict[str, str]]) -> Optional[str]:
+    if not active_name:
+        return None
+    selected = next((item for item in x_accounts if item.get("name") == active_name), None)
+    if not selected:
+        return None
+    cookie_path = selected.get("cookie_path", "").strip()
+    if not cookie_path:
+        return None
+
+    settings.COOKIE_PATH = cookie_path
+    chrome_pool = ChromePool()
+    chrome_pool.cookie_path = Path(cookie_path)
+    return cookie_path
+
+
 # ─────────────────────────────────────────────────────────
 # Health & Status Endpoints
 # ─────────────────────────────────────────────────────────
@@ -280,6 +378,123 @@ async def health_check():
         "data_path": str(settings.DATA_PATH),
         "safety_warning": memorial,
         "timestamp": "2026-01-22T00:00:00Z"
+    }
+
+
+@app.get("/settings/ui")
+async def get_ui_settings():
+    """Desktop Settings sekmesi için yönetilebilir ayarları döndürür."""
+    x_accounts = _load_x_accounts()
+    active_x_account = os.environ.get("ACTIVE_X_ACCOUNT", "")
+
+    data = {
+        "sniper_allow_fallback": bool(settings.SNIPER_ALLOW_FALLBACK),
+        "ai": {
+            "gemini_key_masked": _mask_secret(os.environ.get("GEMINI_API_KEY", "")),
+            "openai_key_masked": _mask_secret(os.environ.get("OPENAI_API_KEY", "")),
+            "gemini_key_set": bool(os.environ.get("GEMINI_API_KEY", "")),
+            "openai_key_set": bool(os.environ.get("OPENAI_API_KEY", "")),
+        },
+        "telegram": {
+            "bot_token_masked": _mask_secret(os.environ.get("TELEGRAM_BOT_TOKEN", "")),
+            "chat_id": os.environ.get("TELEGRAM_CHAT_ID", ""),
+            "channel_id": os.environ.get("TELEGRAM_CHANNEL_ID", ""),
+            "group_id": os.environ.get("TELEGRAM_GROUP_ID", ""),
+        },
+        "x_accounts": x_accounts,
+        "active_x_account": active_x_account,
+        "active_cookie_path": settings.COOKIE_PATH,
+        "capabilities": {
+            "multi_account_parallel_supported": False,
+            "multi_account_mode": "single-active",
+            "note": "Aynı anda çoklu X hesap desteklenmez; tek aktif profil seçilerek hesaplar arasında geçiş yapılır.",
+        },
+    }
+
+    return {"status": "ok", "data": data}
+
+
+@app.post("/settings/ui")
+async def update_ui_settings(req: SettingsUpdateRequest):
+    """Desktop Settings sekmesinden gelen ayar güncellemelerini uygular."""
+    env_path = _resolve_env_file_path()
+    env_updates: Dict[str, str] = {}
+    requires_restart = False
+
+    if req.gemini_api_key is not None:
+        env_updates["GEMINI_API_KEY"] = req.gemini_api_key
+        os.environ["GEMINI_API_KEY"] = req.gemini_api_key
+        settings.GEMINI_API_KEY = req.gemini_api_key
+        requires_restart = True
+
+    if req.openai_api_key is not None:
+        env_updates["OPENAI_API_KEY"] = req.openai_api_key
+        os.environ["OPENAI_API_KEY"] = req.openai_api_key
+        settings.OPENAI_API_KEY = req.openai_api_key
+        requires_restart = True
+
+    if req.telegram_bot_token is not None:
+        env_updates["TELEGRAM_BOT_TOKEN"] = req.telegram_bot_token
+        os.environ["TELEGRAM_BOT_TOKEN"] = req.telegram_bot_token
+        settings.TELEGRAM_BOT_TOKEN = req.telegram_bot_token
+        requires_restart = True
+
+    if req.telegram_chat_id is not None:
+        env_updates["TELEGRAM_CHAT_ID"] = req.telegram_chat_id
+        os.environ["TELEGRAM_CHAT_ID"] = req.telegram_chat_id
+        settings.TELEGRAM_CHAT_ID = req.telegram_chat_id
+
+    if req.telegram_channel_id is not None:
+        env_updates["TELEGRAM_CHANNEL_ID"] = req.telegram_channel_id
+        os.environ["TELEGRAM_CHANNEL_ID"] = req.telegram_channel_id
+
+    if req.telegram_group_id is not None:
+        env_updates["TELEGRAM_GROUP_ID"] = req.telegram_group_id
+        os.environ["TELEGRAM_GROUP_ID"] = req.telegram_group_id
+
+    if req.sniper_allow_fallback is not None:
+        value = "True" if req.sniper_allow_fallback else "False"
+        env_updates["SNIPER_ALLOW_FALLBACK"] = value
+        os.environ["SNIPER_ALLOW_FALLBACK"] = value
+        settings.SNIPER_ALLOW_FALLBACK = bool(req.sniper_allow_fallback)
+
+    x_accounts_payload: List[Dict[str, str]] = _load_x_accounts()
+    if req.x_accounts is not None:
+        x_accounts_payload = [item.model_dump() for item in req.x_accounts]
+        serialized_accounts = json.dumps(x_accounts_payload, ensure_ascii=False)
+        env_updates["X_ACCOUNTS_JSON"] = serialized_accounts
+        os.environ["X_ACCOUNTS_JSON"] = serialized_accounts
+
+    active_cookie_applied = ""
+    if req.active_x_account is not None:
+        env_updates["ACTIVE_X_ACCOUNT"] = req.active_x_account
+        os.environ["ACTIVE_X_ACCOUNT"] = req.active_x_account
+
+        if req.apply_active_account_cookie:
+            active_cookie = _apply_active_account_cookie(req.active_x_account, x_accounts_payload)
+            if active_cookie:
+                env_updates["COOKIE_PATH"] = active_cookie
+                os.environ["COOKIE_PATH"] = active_cookie
+                active_cookie_applied = active_cookie
+
+    if env_updates:
+        _upsert_env_values(env_path, env_updates)
+
+    daemon_restarted = False
+    if active_cookie_applied:
+        try:
+            x_daemon = XDaemon()
+            await x_daemon.restart()
+            daemon_restarted = True
+        except Exception as daemon_err:
+            logger.warning(f"⚠️ Daemon restart skipped after account switch: {daemon_err}")
+
+    return {
+        "status": "ok",
+        "message": "Ayarlar kaydedildi",
+        "requires_restart": requires_restart,
+        "daemon_restarted": daemon_restarted,
+        "active_cookie_path": settings.COOKIE_PATH,
     }
 
 @app.get("/system/status")
@@ -612,11 +827,21 @@ async def post_thread(item_id: str, background_tasks: BackgroundTasks):
             raise HTTPException(status_code=404, detail=f"Thread not found: {item_id}")
         
         item = approval_queue.items[item_id]
+        tracker = get_interaction_tracker()
         
         # Hangi dilde yayınlanacak (default: tr)
         thread = item.tr_thread if item.tr_thread else item.en_thread
         if not thread:
             return {"status": "error", "message": "Thread boş"}
+
+        tracker.record_event(
+            action="thread_publish",
+            status="started",
+            item_id=item_id,
+            source="desktop",
+            details={"tweet_count": len(thread)},
+            viral_score=float(item.viral_score or 0),
+        )
         
         # Mention'ları ilk tweet'e ekle (doğal bir şekilde)
         if item.mentions:
@@ -629,6 +854,7 @@ async def post_thread(item_id: str, background_tasks: BackgroundTasks):
             x_daemon = XDaemon()
             previous_url = None
             first_tweet_url = None
+            failed_step = 0
             
             for i, tweet_text in enumerate(thread):
                 try:
@@ -655,13 +881,31 @@ async def post_thread(item_id: str, background_tasks: BackgroundTasks):
                     
                 except Exception as e:
                     logger.error(f"❌ Thread tweet {i+1} failed: {e}")
+                    failed_step = i + 1
+                    tracker.record_event(
+                        action="thread_publish",
+                        status="failed",
+                        item_id=item_id,
+                        source="desktop",
+                        details={"failed_step": i + 1, "error": str(e)},
+                        viral_score=float(item.viral_score or 0),
+                    )
                     break
-            
-            # Mark as processed
-            from approval.approval_queue import ApprovalStatus
-            item.status = ApprovalStatus.PROCESSED
-            approval_queue._save()
-            logger.info(f"✅ Thread fully posted: {item_id}")
+
+            if failed_step == 0:
+                # Mark as processed
+                from approval.approval_queue import ApprovalStatus
+                item.status = ApprovalStatus.PROCESSED
+                approval_queue._save()
+                logger.info(f"✅ Thread fully posted: {item_id}")
+                tracker.record_event(
+                    action="thread_publish",
+                    status="success",
+                    item_id=item_id,
+                    source="desktop",
+                    details={"tweet_count": len(thread), "tweet_url": first_tweet_url or ""},
+                    viral_score=float(item.viral_score or 0),
+                )
             
             # 📲 Telegram bildirim + kanal yayını
             try:
@@ -712,9 +956,27 @@ async def sniper_reply(item_id: str, background_tasks: BackgroundTasks):
             raise HTTPException(status_code=404, detail=f"Thread not found: {item_id}")
         
         item = approval_queue.items[item_id]
+        tracker = get_interaction_tracker()
         
         if not item.sniper_targets:
+            tracker.record_event(
+                action="sniper",
+                status="no_targets",
+                item_id=item_id,
+                source="desktop",
+                details={},
+                viral_score=float(item.viral_score or 0),
+            )
             return {"status": "info", "message": "Bu içerik için sniper target bulunamadı"}
+
+        tracker.record_event(
+            action="sniper",
+            status="started",
+            item_id=item_id,
+            source="desktop",
+            details={"target_count": len(item.sniper_targets[:3])},
+            viral_score=float(item.viral_score or 0),
+        )
         
         # AI ile konuya özel akıllı reply'lar üret
         from ai_content_generator import get_ai_generator
@@ -724,6 +986,13 @@ async def sniper_reply(item_id: str, background_tasks: BackgroundTasks):
             """Background'da sniper reply'ları çalıştır"""
             x_daemon = XDaemon()
             replies_sent = 0
+            targets_total = len(item.sniper_targets[:3])
+            skipped_unrelated = 0
+            skipped_missing_url = 0
+            focus_keywords = build_focus_keywords(
+                title=item.content_item.title,
+                body=item.generated_tweet[:300],
+            )
             
             for target in item.sniper_targets[:3]:  # Max 3 reply
                 try:
@@ -748,33 +1017,91 @@ Reply kuralları:
 - Sadece reply metnini döndür
 """
                     reply_text = await ai._generate_with_retry(reply_prompt, max_retries=2)
-                    
-                    # TODO: Gerçek implementasyon - target'ın son tweetini bul ve reply at
-                    # Şimdilik loglayalım
-                    logger.info(f"🎯 Sniper reply ready for @{username}: {reply_text[:80]}...")
+
+                    target_tweet_url = target.get("tweet_url") or target.get("url")
+                    if not target_tweet_url and settings.SNIPER_ALLOW_FALLBACK:
+                        latest_context = await x_daemon.get_latest_tweet_context(username)
+                        if latest_context.get("success"):
+                            target_tweet_url = latest_context.get("tweet_url", "")
+                            latest_text = latest_context.get("tweet_text", "")
+                            relevant, score, _ = is_relevant_for_sniper(latest_text, focus_keywords, minimum_hits=2)
+                            if not relevant:
+                                skipped_unrelated += 1
+                                logger.info(
+                                    f"⏭️ Sniper skip @{username}: unrelated latest tweet (score={score})"
+                                )
+                                continue
+
+                    if not target_tweet_url or "/status/" not in target_tweet_url:
+                        skipped_missing_url += 1
+                        logger.warning(f"⚠️ Sniper target tweet URL bulunamadı: @{username}")
+                        continue
+
+                    result = await x_daemon.reply_to_tweet(
+                        tweet_url=target_tweet_url,
+                        text=reply_text,
+                    )
+                    if not result.get("success"):
+                        logger.warning(f"⚠️ Sniper reply failed for @{username}: {result.get('error')}")
+                        continue
+
+                    logger.info(f"🎯 Sniper reply sent to @{username}: {reply_text[:80]}...")
                     replies_sent += 1
                     
                     await asyncio.sleep(5)  # Rate limit
                     
                 except Exception as e:
                     logger.error(f"❌ Sniper reply to @{target['username']} failed: {e}")
-            
-            logger.info(f"🎯 Sniper reply preview complete: {replies_sent} hazır metin üretildi")
+
+            logger.info(f"🎯 Sniper reply complete: {replies_sent}/{targets_total} gönderildi")
+            tracker.record_event(
+                action="sniper",
+                status="success",
+                item_id=item_id,
+                source="desktop",
+                details={
+                    "sent_count": replies_sent,
+                    "target_count": targets_total,
+                    "skipped_unrelated": skipped_unrelated,
+                    "skipped_missing_url": skipped_missing_url,
+                    "fallback_enabled": bool(settings.SNIPER_ALLOW_FALLBACK),
+                },
+                viral_score=float(item.viral_score or 0),
+            )
         
         background_tasks.add_task(_execute_sniper_replies)
         
         return {
             "status": "success",
-            "message": f"Sniper reply simülasyonu başlatıldı ({len(item.sniper_targets[:3])} hedef)",
+            "message": f"Sniper reply başlatıldı ({len(item.sniper_targets[:3])} hedef)",
             "targets": [t["handle"] for t in item.sniper_targets[:3]],
-            "mode": "preview_only",
+            "mode": "live",
         }
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"❌ Sniper reply failed: {e}")
+        get_interaction_tracker().record_event(
+            action="sniper",
+            status="failed",
+            item_id=item_id,
+            source="desktop",
+            details={"error": str(e)},
+        )
         return {"status": "error", "message": str(e)}
+
+
+@app.get("/analytics/dashboard")
+async def analytics_dashboard(limit: int = 80):
+    """UI/Telegram etkileşim ve sonuç takip dashboard verisi"""
+    try:
+        tracker = get_interaction_tracker()
+        data = tracker.build_dashboard(approval_queue=approval_queue, limit=limit)
+        return {"status": "success", "data": data}
+    except Exception as e:
+        logger.error(f"❌ Analytics dashboard failed: {e}")
+        return {"status": "error", "message": str(e), "data": {}}
 
 
 @app.post("/approval/approve/{item_id}")
