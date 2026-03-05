@@ -1,9 +1,18 @@
+param(
+    # Sadece ISCC ile setup paketi olustur (varsayilan)
+    # -FullBuild: once npm run tauri build, sonra ISCC
+    [switch]$FullBuild,
+    # Manuel versiyon: verilirse version.txt'ten okumak yerine bu kullanilir
+    [string]$Version = ""
+)
+
 $ErrorActionPreference = 'Stop'
 
 $installerDir = $PSScriptRoot
 $issPath = Join-Path $installerDir "xhive_setup.iss"
 $versionFile = Join-Path $installerDir "version.txt"
 $isccPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+$desktopDir = Join-Path $installerDir "..\apps\desktop"
 
 if (-not (Test-Path $isccPath)) {
     Write-Host "[HATA] ISCC bulunamadı: $isccPath" -ForegroundColor Red
@@ -45,17 +54,41 @@ function Increment-Version([int]$major, [int]$minor, [int]$patch) {
     return "$major.$minor.$patch"
 }
 
-if (Test-Path $versionFile) {
-    $currentVersion = (Get-Content $versionFile -Raw).Trim()
+# --- Versiyon belirle ---
+if ($Version -ne "") {
+    # Manuel override
+    $null = Parse-Version $Version   # format kontrolu
+    $currentVersion = $Version
+    $newVersion = $Version
+    Write-Host "[INFO] Manuel versiyon: $newVersion" -ForegroundColor Cyan
 } else {
-    $currentVersion = "1.0.0"
+    if (Test-Path $versionFile) {
+        $currentVersion = (Get-Content $versionFile -Raw).Trim()
+    } else {
+        $currentVersion = "1.0.0"
+    }
+    $parsed = Parse-Version $currentVersion
+    $newVersion = Increment-Version -major $parsed.Major -minor $parsed.Minor -patch $parsed.Patch
+    Write-Host "[INFO] Aday versiyon: $currentVersion -> $newVersion" -ForegroundColor Cyan
 }
 
-$parsed = Parse-Version $currentVersion
-$newVersion = Increment-Version -major $parsed.Major -minor $parsed.Minor -patch $parsed.Patch
+# --- FullBuild: once Tauri build ---
+if ($FullBuild) {
+    Write-Host "[INFO] -FullBuild: Tauri build baslatiliyor..." -ForegroundColor Yellow
+    $cargoPath = Join-Path $env:USERPROFILE ".cargo\bin"
+    $env:PATH = "$cargoPath;$env:PATH"
 
-Write-Host "[INFO] Aday versiyon: $currentVersion -> $newVersion" -ForegroundColor Cyan
-Write-Host "[INFO] Setup derleniyor... (AV kilidine karşı otomatik tekrar denenecek)" -ForegroundColor Yellow
+    Push-Location $desktopDir
+    try {
+        npm run tauri build
+        if ($LASTEXITCODE -ne 0) { throw "Tauri build hatasi (exit: $LASTEXITCODE)" }
+        Write-Host "[OK] Tauri build tamamlandi." -ForegroundColor Green
+    } finally {
+        Pop-Location
+    }
+}
+
+Write-Host "[INFO] Setup derleniyor... (AV kilidine karsi otomatik tekrar denenecek)" -ForegroundColor Yellow
 
 $maxAttempts = 4
 $attempt = 0
