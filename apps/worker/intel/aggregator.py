@@ -1,7 +1,7 @@
 """
 Content Aggregator for X-Hive
 
-Combines all intel sources (RSS, Telegram, GitHub) into unified feed.
+Combines all intel sources into unified feed.
 Handles deduplication, filtering, sorting, and statistics.
 """
 
@@ -24,6 +24,15 @@ from .base_source import (
 from .rss_source import tech_news_source, ai_news_source
 from .telegram_source import telegram_source
 from .github_source import github_trending_source, github_ai_source
+from .reddit_source import reddit_source
+from .hackernews_source import hackernews_source
+from .arxiv_source import arxiv_source
+from .producthunt_source import producthunt_source
+from .google_trends_source import google_trends_source
+from .huggingface_source import huggingface_source
+from .polymarket_source import polymarket_source
+from .rss_news_source import rss_news_source
+from .twitter_trends_source import twitter_trends_source
 
 logger = logging.getLogger(__name__)
 
@@ -32,40 +41,47 @@ class ContentAggregator:
     """
     Aggregates content from all intel sources.
     
-    Combines RSS, Telegram, and GitHub sources into unified feed.
-    Handles deduplication, filtering, and sorting.
-    
     Features:
     - Multi-source fetching (concurrent)
     - Automatic deduplication by URL
     - Relevance and recency filtering
     - Category-based grouping
     - Engagement scoring
-    - Comprehensive statistics
     """
     
     def __init__(
         self,
         use_rss: bool = True,
-        use_telegram: bool = False,  # Default off until channels configured
+        use_telegram: bool = False,
         use_github: bool = True,
+        use_reddit: bool = False,  # Disabled due to timeout issues
+        use_hackernews: bool = True,
+        use_arxiv: bool = True,
+        use_producthunt: bool = False,  # Disabled due to timeout issues
+        use_google_trends: bool = False,  # Disabled due to timeout issues
+        use_huggingface: bool = False,  # Disabled due to timeout issues
+        use_polymarket: bool = False,  # Disabled due to timeout issues
+        use_rss_news: bool = False,  # Disabled due to connection issues
+        use_twitter_trends: bool = False,
         min_relevance: float = 0.5,
         max_items: int = 50
     ):
         """
         Initialize content aggregator.
-        
-        Args:
-            use_rss: Enable RSS sources
-            use_telegram: Enable Telegram sources
-            use_github: Enable GitHub sources
-            min_relevance: Minimum relevance score (0-1)
-            max_items: Maximum items to return
         """
         
         self.use_rss = use_rss
         self.use_telegram = use_telegram
         self.use_github = use_github
+        self.use_reddit = use_reddit
+        self.use_hackernews = use_hackernews
+        self.use_arxiv = use_arxiv
+        self.use_producthunt = use_producthunt
+        self.use_google_trends = use_google_trends
+        self.use_huggingface = use_huggingface
+        self.use_polymarket = use_polymarket
+        self.use_rss_news = use_rss_news
+        self.use_twitter_trends = use_twitter_trends
         self.min_relevance = min_relevance
         self.max_items = max_items
         
@@ -81,17 +97,41 @@ class ContentAggregator:
         if use_github:
             self.sources.extend([github_trending_source, github_ai_source])
         
-        logger.info(f"✅ ContentAggregator initialized with {len(self.sources)} sources")
+        if use_reddit:
+            self.sources.append(reddit_source)
+        
+        if use_hackernews:
+            self.sources.append(hackernews_source)
+        
+        if use_arxiv:
+            self.sources.append(arxiv_source)
+        
+        if use_producthunt:
+            self.sources.append(producthunt_source)
+        
+        if use_google_trends:
+            self.sources.append(google_trends_source)
+        
+        if use_huggingface:
+            self.sources.append(huggingface_source)
+        
+        if use_polymarket:
+            self.sources.append(polymarket_source)
+        
+        if use_rss_news:
+            self.sources.append(rss_news_source)
+        
+        if use_twitter_trends:
+            self.sources.append(twitter_trends_source)
+        
+        logger.info(f"ContentAggregator initialized with {len(self.sources)} sources")
     
     async def fetch_all(self) -> List[ContentItem]:
         """
         Fetch content from all enabled sources.
-        
-        Returns:
-            List of ContentItem objects (deduplicated, filtered, sorted)
         """
         
-        logger.info(f"📡 Fetching content from {len(self.sources)} sources...")
+        logger.info(f"Fetching content from {len(self.sources)} sources...")
         
         all_items = []
         
@@ -107,50 +147,46 @@ class ContentAggregator:
         # Combine results
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                logger.error(f"❌ Source {self.sources[i].get_source_name()} failed: {result}")
+                logger.error(f"Source {self.sources[i].get_source_name()} failed: {result}")
                 continue
             
             if isinstance(result, list):
                 all_items.extend(result)
         
-        logger.info(f"📊 Collected {len(all_items)} items from all sources")
+        logger.info(f"Collected {len(all_items)} items from all sources")
         
         # Process items
         processed = self._process_items(all_items)
         
-        logger.info(f"✅ Returning {len(processed)} processed items")
+        logger.info(f"Returning {len(processed)} processed items")
         
         return processed
     
     async def _fetch_source_safe(self, source: BaseContentSource) -> List[ContentItem]:
         """
-        Safely fetch from a source with error handling.
-        
-        Args:
-            source: Content source
-        
-        Returns:
-            List of ContentItem objects (or empty on error)
+        Safely fetch from a source with error handling and timeout.
         """
         
         try:
-            items = await source.fetch_with_tracking()
-            logger.info(f"✅ {source.get_source_name()}: {len(items)} items")
+            # Add timeout to prevent hanging
+            items = await asyncio.wait_for(
+                source.fetch_with_tracking(), 
+                timeout=30.0  # 30 second timeout per source
+            )
+            logger.info(f"{source.get_source_name()}: {len(items)} items")
             return items
         
+        except asyncio.TimeoutError:
+            logger.warning(f"{source.get_source_name()}: Timeout after 30s")
+            return []
+        
         except Exception as e:
-            logger.error(f"❌ {source.get_source_name()} failed: {e}")
+            logger.error(f"{source.get_source_name()} failed: {e}")
             return []
     
     def _process_items(self, items: List[ContentItem]) -> List[ContentItem]:
         """
         Process items: deduplicate, filter, sort.
-        
-        Args:
-            items: Raw items
-        
-        Returns:
-            Processed items
         """
         
         # Step 1: Deduplicate by URL
@@ -162,35 +198,31 @@ class ContentAggregator:
         logger.debug(f"After relevance filter: {len(items)} items")
         
         # Step 3: Filter recent (last 7 days)
-        cutoff = datetime.now() - timedelta(days=7)
+        from datetime import timezone
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
         
-        # Filter items with valid dates
+        def safe_datetime_compare(dt, cutoff):
+            """Safely compare datetime, handling timezone differences."""
+            if dt is None:
+                return False
+            if dt.tzinfo is None:
+                # Make naive datetime timezone-aware (assume UTC)
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt > cutoff
+        
         filtered_items = []
         for item in items:
-            # Check published_at if available
-            if item.published_at:
-                try:
-                    # Handle timezone-aware datetimes
-                    if item.published_at.tzinfo is not None:
-                        cutoff_aware = cutoff.replace(tzinfo=item.published_at.tzinfo)
-                        if item.published_at > cutoff_aware:
-                            filtered_items.append(item)
-                    elif item.published_at > cutoff:
-                        filtered_items.append(item)
-                except:
-                    # If comparison fails, include the item
-                    filtered_items.append(item)
-            # Fallback to collected_at
-            elif item.collected_at and item.collected_at > cutoff:
+            if safe_datetime_compare(item.published_at, cutoff):
+                filtered_items.append(item)
+            elif safe_datetime_compare(item.collected_at, cutoff):
                 filtered_items.append(item)
             else:
-                # Include items without dates (GitHub trending, etc.)
-                filtered_items.append(item)
+                filtered_items.append(item)  # Include items without dates
         
         items = filtered_items
         logger.debug(f"After recency filter: {len(items)} items")
         
-        # Step 4: Sort by combined score (relevance 60%, engagement 40%)
+        # Step 4: Sort by combined score
         items = sorted(
             items,
             key=lambda x: (x.relevance_score * 0.6 + x.engagement_score * 0.4),
@@ -205,12 +237,6 @@ class ContentAggregator:
     def get_by_category(self, items: List[ContentItem]) -> Dict[ContentCategory, List[ContentItem]]:
         """
         Group items by category.
-        
-        Args:
-            items: Content items
-        
-        Returns:
-            Dictionary mapping category to items
         """
         
         grouped = defaultdict(list)
@@ -223,13 +249,6 @@ class ContentAggregator:
     def get_top_items(self, items: List[ContentItem], n: int = 10) -> List[ContentItem]:
         """
         Get top N items by combined score.
-        
-        Args:
-            items: Content items
-            n: Number of items
-        
-        Returns:
-            Top N items
         """
         
         return sorted(
@@ -237,160 +256,22 @@ class ContentAggregator:
             key=lambda x: (x.relevance_score * 0.6 + x.engagement_score * 0.4),
             reverse=True
         )[:n]
-    
-    def get_ai_ml_items(self, items: List[ContentItem]) -> List[ContentItem]:
-        """
-        Get only AI/ML related items.
-        
-        Args:
-            items: Content items
-        
-        Returns:
-            AI/ML items sorted by score
-        """
-        
-        ai_items = [item for item in items if item.category == ContentCategory.AI_ML]
-        
-        return sorted(
-            ai_items,
-            key=lambda x: (x.relevance_score * 0.6 + x.engagement_score * 0.4),
-            reverse=True
-        )
-    
-    def get_stats(self, items: List[ContentItem]) -> Dict:
-        """
-        Get aggregation statistics.
-        
-        Args:
-            items: Content items
-        
-        Returns:
-            Statistics dictionary
-        """
-        
-        categories = defaultdict(int)
-        sources = defaultdict(int)
-        
-        for item in items:
-            categories[item.category] += 1
-            sources[item.source_type] += 1
-        
-        return {
-            'total_items': len(items),
-            'categories': dict(categories),
-            'sources': dict(sources),
-            'avg_relevance': sum(i.relevance_score for i in items) / len(items) if items else 0,
-            'avg_engagement': sum(i.engagement_score for i in items) / len(items) if items else 0,
-            'ai_ml_count': sum(1 for i in items if i.category == ContentCategory.AI_ML)
-        }
-    
-    async def fetch_ai_content(self) -> List[ContentItem]:
-        """
-        Fetch only AI/ML focused content (convenience method).
-        
-        Returns:
-            AI/ML content items
-        """
-        
-        all_items = await self.fetch_all()
-        return self.get_ai_ml_items(all_items)
-    
-    async def fetch_top_stories(self, n: int = 10) -> List[ContentItem]:
-        """
-        Fetch top N stories from all sources.
-        
-        Args:
-            n: Number of stories
-        
-        Returns:
-            Top N stories
-        """
-        
-        all_items = await self.fetch_all()
-        return self.get_top_items(all_items, n)
 
 
-# Global instance
+# Global aggregator instance
 aggregator = ContentAggregator(
     use_rss=True,
-    use_telegram=False,  # Enable after configuring channels
+    use_telegram=False,
     use_github=True,
+    use_reddit=True,
+    use_hackernews=True,
+    use_arxiv=True,
+    use_producthunt=True,
+    use_google_trends=True,
+    use_huggingface=True,
+    use_polymarket=True,
+    use_rss_news=True,
+    use_twitter_trends=False,
     min_relevance=0.5,
     max_items=50
 )
-
-
-# Test example
-async def test_aggregator():
-    """Test content aggregator"""
-    
-    print("=" * 80)
-    print("🧪 CONTENT AGGREGATOR TEST")
-    print("=" * 80)
-    
-    agg = ContentAggregator(
-        use_rss=True,
-        use_telegram=False,
-        use_github=True,
-        min_relevance=0.5,
-        max_items=30
-    )
-    
-    print("\n[1] Fetching from all sources...")
-    items = await agg.fetch_all()
-    
-    print(f"\n✅ Fetched {len(items)} items total")
-    
-    # Statistics
-    print("\n" + "=" * 80)
-    print("📊 STATISTICS")
-    print("=" * 80)
-    
-    stats = agg.get_stats(items)
-    print(f"\nTotal items: {stats['total_items']}")
-    print(f"AI/ML items: {stats['ai_ml_count']}")
-    print(f"Avg relevance: {stats['avg_relevance']:.2f}")
-    print(f"Avg engagement: {stats['avg_engagement']:.2f}")
-    
-    print("\nCategories:")
-    for category, count in stats['categories'].items():
-        print(f"   {category.name}: {count}")
-    
-    print("\nSources:")
-    for source, count in stats['sources'].items():
-        print(f"   {source}: {count}")
-    
-    # Top 10 stories
-    print("\n" + "=" * 80)
-    print("🔥 TOP 10 STORIES")
-    print("=" * 80)
-    
-    top_items = agg.get_top_items(items, 10)
-    
-    for idx, item in enumerate(top_items, 1):
-        score = item.relevance_score * 0.6 + item.engagement_score * 0.4
-        print(f"\n{idx}. {item.title[:80]}")
-        print(f"   Source: {item.source_name} ({item.source_type})")
-        print(f"   Category: {item.category.name}")
-        print(f"   Score: {score:.2f} (R:{item.relevance_score:.2f} E:{item.engagement_score:.2f})")
-        print(f"   URL: {item.url}")
-    
-    # AI/ML content
-    print("\n" + "=" * 80)
-    print("🤖 AI/ML CONTENT")
-    print("=" * 80)
-    
-    ai_items = agg.get_ai_ml_items(items)
-    print(f"\nFound {len(ai_items)} AI/ML items")
-    
-    for idx, item in enumerate(ai_items[:5], 1):
-        print(f"\n{idx}. {item.title[:80]}")
-        print(f"   Source: {item.source_name}")
-    
-    print("\n" + "=" * 80)
-    print("✅ AGGREGATOR TEST COMPLETE")
-    print("=" * 80)
-
-
-if __name__ == "__main__":
-    asyncio.run(test_aggregator())

@@ -254,7 +254,7 @@ Source → ContentItem → Aggregator → Deduplication
 
 ## 🔧 Technical Stack
 
-- **Language:** Python 3.14
+- **Language:** Python 3.11
 - **Content Sources:** PRAW, aiohttp, BeautifulSoup4, feedparser
 - **AI:** Google Gemini 2.5
 - **Twitter:** tweepy (OAuth1a)

@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$installerDir = "C:\XHive\X-Hive\installer"
+$installerDir = $PSScriptRoot
 $issPath = Join-Path $installerDir "xhive_setup.iss"
 $versionFile = Join-Path $installerDir "version.txt"
 $isccPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
@@ -89,5 +89,5 @@ try {
 
 Set-Content -Path $versionFile -Value $newVersion -Encoding ascii
 Write-Host "[OK] Derleme tamamlandı ve versiyon kalıcılaştırıldı: $newVersion" -ForegroundColor Green
-Write-Host "[OK] Output: C:\XHive\X-Hive\installer\output" -ForegroundColor Green
+Write-Host "[OK] Output: $(Join-Path $installerDir 'output')" -ForegroundColor Green
 Write-Host "[INFO] Temiz kurulum (eski sürümü kaldır + yeniyi kur): .\\install_latest_clean.ps1" -ForegroundColor Cyan

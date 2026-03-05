@@ -1,6 +1,6 @@
 # X-Hive Technical Index 🗂️
 
-**Last Updated:** 6 Şubat 2026  
+**Last Updated:** 5 Mart 2026  
 **Version:** 1.0.0  
 **Status:** Production Ready ✅
 
@@ -30,7 +30,7 @@
 - Monitors system health and collects metrics
 
 **Tech Stack:**
-- Python 3.14
+- Python 3.11
 - Playwright (browser automation)
 - Google Gemini 2.5 Flash (AI)
 - Telethon (Telegram)

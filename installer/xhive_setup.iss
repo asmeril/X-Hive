@@ -146,6 +146,8 @@ Source: "..\apps\worker\metrics_collector.py"; DestDir: "{localappdata}\{#MyAppN
 Source: "..\apps\worker\post_scheduler.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 Source: "..\apps\worker\rate_limiter.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 Source: "..\apps\worker\safety_logger.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\interaction_tracker.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
+Source: "..\apps\worker\sniper_guard.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 Source: "..\apps\worker\structured_logger.py"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 Source: "..\apps\worker\requirements.txt"; DestDir: "{localappdata}\{#MyAppName}\worker"; Flags: ignoreversion
 

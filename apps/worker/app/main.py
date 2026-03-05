@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 # Core modules
 from config import settings
@@ -271,10 +271,33 @@ class SettingsUpdateRequest(BaseModel):
     telegram_chat_id: Optional[str] = None
     telegram_channel_id: Optional[str] = None
     telegram_group_id: Optional[str] = None
+    telegram_api_id: Optional[str] = None
+    telegram_api_hash: Optional[str] = None
+    telegram_phone: Optional[str] = None
     sniper_allow_fallback: Optional[bool] = None
     x_accounts: Optional[List[XAccountProfile]] = None
     active_x_account: Optional[str] = None
     apply_active_account_cookie: bool = True
+
+
+class TelegramIntelAuthStartRequest(BaseModel):
+    api_id: Optional[str] = None
+    api_hash: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class TelegramIntelAuthCodeRequest(BaseModel):
+    code: str
+
+
+class TelegramIntelAuthPasswordRequest(BaseModel):
+    password: str
+
+
+_telegram_intel_auth_state: Dict[str, Any] = {
+    "client": None,
+    "phone": "",
+}
 
 
 def _resolve_env_file_path() -> Path:
@@ -400,6 +423,9 @@ async def get_ui_settings():
             "chat_id": os.environ.get("TELEGRAM_CHAT_ID", ""),
             "channel_id": os.environ.get("TELEGRAM_CHANNEL_ID", ""),
             "group_id": os.environ.get("TELEGRAM_GROUP_ID", ""),
+            "api_id_set": bool(os.environ.get("TELEGRAM_API_ID", "")),
+            "api_hash_set": bool(os.environ.get("TELEGRAM_API_HASH", "")),
+            "phone_masked": _mask_secret(os.environ.get("TELEGRAM_PHONE", "")),
         },
         "x_accounts": x_accounts,
         "active_x_account": active_x_account,
@@ -451,6 +477,21 @@ async def update_ui_settings(req: SettingsUpdateRequest):
     if req.telegram_group_id is not None:
         env_updates["TELEGRAM_GROUP_ID"] = req.telegram_group_id
         os.environ["TELEGRAM_GROUP_ID"] = req.telegram_group_id
+
+    if req.telegram_api_id is not None:
+        env_updates["TELEGRAM_API_ID"] = str(req.telegram_api_id).strip()
+        os.environ["TELEGRAM_API_ID"] = str(req.telegram_api_id).strip()
+        requires_restart = True
+
+    if req.telegram_api_hash is not None:
+        env_updates["TELEGRAM_API_HASH"] = req.telegram_api_hash.strip()
+        os.environ["TELEGRAM_API_HASH"] = req.telegram_api_hash.strip()
+        requires_restart = True
+
+    if req.telegram_phone is not None:
+        env_updates["TELEGRAM_PHONE"] = req.telegram_phone.strip()
+        os.environ["TELEGRAM_PHONE"] = req.telegram_phone.strip()
+        requires_restart = True
 
     if req.sniper_allow_fallback is not None:
         value = "True" if req.sniper_allow_fallback else "False"
@@ -1368,18 +1409,182 @@ if __name__ == "__main__":
 
 @app.get("/telegram/status")
 async def telegram_status():
-    """Get Telegram Hub status"""
+    """Get Telegram status for both Bot Hub and Intel (Telethon) modules"""
     try:
+        # Bot Hub status (notifications + approval buttons)
         from telegram_hub import get_telegram_hub
         hub = get_telegram_hub()
+
+        # Intel status (Telethon user session)
+        api_id_raw = os.environ.get("TELEGRAM_API_ID", "").strip()
+        api_hash = os.environ.get("TELEGRAM_API_HASH", "").strip()
+        phone = os.environ.get("TELEGRAM_PHONE", "").strip()
+        credentials_set = bool(api_id_raw and api_hash)
+
+        appdata_base = Path(os.environ.get("LOCALAPPDATA", "")) / "XHive" / "worker"
+        session_file = appdata_base / "data" / "telegram" / "x_hive_telegram.session"
+        session_name = str(session_file)
+        if session_name.endswith(".session"):
+            session_name = session_name[:-8]
+
+        telethon_available = False
+        authorized = False
+        last_error = ""
+        try:
+            from telethon import TelegramClient  # type: ignore
+            telethon_available = True
+            if credentials_set:
+                try:
+                    client = TelegramClient(session_name, int(api_id_raw), api_hash)
+                    await client.connect()
+                    authorized = await client.is_user_authorized()
+                    await client.disconnect()
+                except Exception as intel_err:
+                    last_error = str(intel_err)
+        except Exception:
+            telethon_available = False
+
         return {
             "status": "ok",
             "telegram": {
-                "running": hub._running,
-                "admin_chat": bool(hub.admin_chat_id),
-                "channel_configured": bool(hub.channel_id),
-                "group_configured": bool(hub.group_id),
+                "hub": {
+                    "running": hub._running,
+                    "admin_chat": bool(hub.admin_chat_id),
+                    "channel_configured": bool(hub.channel_id),
+                    "group_configured": bool(hub.group_id),
+                },
+                "intel": {
+                    "enabled_in_orchestrator": True,
+                    "telethon_available": telethon_available,
+                    "credentials_set": credentials_set,
+                    "phone_set": bool(phone),
+                    "session_file_exists": session_file.exists(),
+                    "authorized": authorized,
+                    "last_error": last_error,
+                }
             }
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/telegram/intel/auth/start")
+async def telegram_intel_auth_start(req: TelegramIntelAuthStartRequest):
+    """Start Telegram Intel (Telethon) login by sending verification code."""
+    try:
+        try:
+            from telethon import TelegramClient  # type: ignore
+        except Exception:
+            return {"status": "error", "message": "Telethon kurulu değil"}
+
+        api_id_raw = (req.api_id or os.environ.get("TELEGRAM_API_ID", "")).strip()
+        api_hash = (req.api_hash or os.environ.get("TELEGRAM_API_HASH", "")).strip()
+        phone = (req.phone or os.environ.get("TELEGRAM_PHONE", "")).strip()
+
+        if not api_id_raw or not api_hash or not phone:
+            return {"status": "error", "message": "TELEGRAM_API_ID / TELEGRAM_API_HASH / TELEGRAM_PHONE gerekli"}
+
+        try:
+            api_id = int(api_id_raw)
+        except ValueError:
+            return {"status": "error", "message": "TELEGRAM_API_ID sayı olmalı"}
+
+        appdata_base = Path(os.environ.get("LOCALAPPDATA", "")) / "XHive" / "worker"
+        session_file = appdata_base / "data" / "telegram" / "x_hive_telegram.session"
+        session_file.parent.mkdir(parents=True, exist_ok=True)
+        session_name = str(session_file)
+        if session_name.endswith(".session"):
+            session_name = session_name[:-8]
+
+        # close previous pending client if any
+        old_client = _telegram_intel_auth_state.get("client")
+        if old_client is not None:
+            try:
+                await old_client.disconnect()
+            except Exception:
+                pass
+
+        client = TelegramClient(session_name, api_id, api_hash)
+        await client.connect()
+
+        if await client.is_user_authorized():
+            await client.disconnect()
+            _telegram_intel_auth_state["client"] = None
+            _telegram_intel_auth_state["phone"] = ""
+            return {
+                "status": "ok",
+                "step": "already_authorized",
+                "message": "Telegram Intel oturumu zaten yetkili"
+            }
+
+        await client.send_code_request(phone)
+        _telegram_intel_auth_state["client"] = client
+        _telegram_intel_auth_state["phone"] = phone
+
+        return {
+            "status": "ok",
+            "step": "code_sent",
+            "message": "Doğrulama kodu gönderildi"
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/telegram/intel/auth/verify-code")
+async def telegram_intel_auth_verify_code(req: TelegramIntelAuthCodeRequest):
+    """Verify Telegram login code for Intel (Telethon)."""
+    try:
+        client = _telegram_intel_auth_state.get("client")
+        phone = _telegram_intel_auth_state.get("phone", "")
+        if client is None or not phone:
+            return {"status": "error", "message": "Önce kod gönderme adımını başlatın"}
+
+        try:
+            from telethon.errors import SessionPasswordNeededError  # type: ignore
+        except Exception:
+            SessionPasswordNeededError = Exception
+
+        try:
+            await client.sign_in(phone=phone, code=req.code.strip())
+        except SessionPasswordNeededError:
+            return {
+                "status": "ok",
+                "step": "password_required",
+                "message": "İki aşamalı doğrulama parolası gerekli"
+            }
+
+        authorized = await client.is_user_authorized()
+        await client.disconnect()
+        _telegram_intel_auth_state["client"] = None
+        _telegram_intel_auth_state["phone"] = ""
+
+        return {
+            "status": "ok",
+            "step": "authorized" if authorized else "not_authorized",
+            "message": "Telegram Intel doğrulaması tamamlandı" if authorized else "Doğrulama tamamlanamadı"
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/telegram/intel/auth/verify-password")
+async def telegram_intel_auth_verify_password(req: TelegramIntelAuthPasswordRequest):
+    """Verify Telegram 2FA password for Intel (Telethon)."""
+    try:
+        client = _telegram_intel_auth_state.get("client")
+        if client is None:
+            return {"status": "error", "message": "Önce kod doğrulama adımını tamamlayın"}
+
+        await client.sign_in(password=req.password)
+        authorized = await client.is_user_authorized()
+        await client.disconnect()
+        _telegram_intel_auth_state["client"] = None
+        _telegram_intel_auth_state["phone"] = ""
+
+        return {
+            "status": "ok",
+            "step": "authorized" if authorized else "not_authorized",
+            "message": "Telegram Intel 2FA doğrulaması tamamlandı" if authorized else "2FA doğrulaması tamamlanamadı"
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
