@@ -115,7 +115,7 @@ class AIContentGenerator:
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             temperature=0.9,
-                            max_output_tokens=500,
+                            max_output_tokens=2000,
                             top_p=0.95,
                             top_k=40,
                             safety_settings=self.safety_settings
@@ -133,8 +133,8 @@ class AIContentGenerator:
                 
                 # Check if it's a rate limit error (429)
                 if "429" in error_msg or "quota" in error_msg.lower() or "RESOURCE_EXHAUSTED" in error_msg:
-                    retry_delay = initial_delay * (2 ** attempt)  # Exponential backoff
-                    
+                    # Gemini rate limit: minimum 15s bekleme gerekli
+                    retry_delay = max(15.0, initial_delay * (2 ** attempt))
                     logger.warning(f"⏳ Rate limit hit (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay:.1f}s...")
                     if attempt < max_retries - 1:
                         await asyncio.sleep(retry_delay)
@@ -423,9 +423,9 @@ Viral tweet kuralları:
         if not items:
             return []
 
-        # Başlıkları topla (max 40 item gönder, API limiti için)
+        # Başlıkları topla (max 20 item gönder, token limiti için)
         summaries = []
-        for i, item in enumerate(items[:40]):
+        for i, item in enumerate(items[:20]):
             f = self._extract_content_fields(item)
             summaries.append(f"{i+1}. [{f['source']}] {f['title']}")
 
@@ -465,7 +465,7 @@ SADECE aşağıdaki formatta JSON döndür, başka hiçbir şey yazma:
 [{{"index": 1, "score": 8}}, {{"index": 2, "score": 3}}, ...]
 """
         try:
-            response = await self._generate_with_retry(prompt, max_retries=2, initial_delay=1.0)
+            response = await self._generate_with_retry(prompt, max_retries=3, initial_delay=15.0)
             # JSON parse
             import json as _json
             # Temizle (bazen ```json ... ``` ile sarar)
@@ -481,7 +481,7 @@ SADECE aşağıdaki formatta JSON döndür, başka hiçbir şey yazma:
             # Skoru atama
             scored_items = []
             score_map = {s["index"]: s["score"] for s in scores}
-            for i, item in enumerate(items[:40]):
+            for i, item in enumerate(items[:20]):
                 score = score_map.get(i + 1, 5)
                 scored_items.append({"item": item, "viral_score": score})
             
@@ -612,7 +612,7 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
 """
         
         try:
-            raw = await self._generate_with_retry(prompt, max_retries=2, initial_delay=1.5)
+            raw = await self._generate_with_retry(prompt, max_retries=3, initial_delay=15.0)
             # --- ile ayır
             tweets = [t.strip() for t in raw.split("---") if t.strip()]
             
@@ -633,7 +633,7 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
             else:
                 return [f"🧵 {f['title']}\n\nDetails 👇\n{f['url']} #Tech"]
 
-    async def generate_viral_threads(self, items: list, top_n: int = 8) -> list:
+    async def generate_viral_threads(self, items: list, top_n: int = 5) -> list:
         """
         Tam pipeline: Viral skorla → En iyi N'ini seç → TR + EN thread üret.
         
@@ -660,10 +660,10 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
                 continue
             
             try:
-                # TR ve EN threadleri paralel üret
-                tr_task = self.generate_thread(item, language="tr")
-                en_task = self.generate_thread(item, language="en")
-                tr_thread, en_thread = await asyncio.gather(tr_task, en_task)
+                # TR thread üret, ardından EN (sıralı — rate limit koruması)
+                tr_thread = await self.generate_thread(item, language="tr")
+                await asyncio.sleep(4)  # Gemini rate limit arası bekleme
+                en_thread = await self.generate_thread(item, language="en")
                 
                 results.append({
                     "item": item,
@@ -671,10 +671,10 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
                     "tr_thread": tr_thread,
                     "en_thread": en_thread,
                 })
-                logger.info(f"✅ Threads ready (score={viral_score}): {self._extract_content_fields(item)['title'][:50]}...")
+                logger.info(f"\u2705 Threads ready (score={viral_score}): {self._extract_content_fields(item)['title'][:50]}...")
                 
-                # Rate limit koruması (Gemini free tier)
-                await asyncio.sleep(2)
+                # İtemler arası bekleme (Gemini free tier)
+                await asyncio.sleep(6)
                 
             except Exception as e:
                 logger.error(f"❌ Thread generation failed for item: {e}")
