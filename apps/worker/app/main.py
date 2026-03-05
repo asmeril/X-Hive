@@ -1398,11 +1398,6 @@ async def lock_release():
         }
 
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=settings.WORKER_PORT)
-
-
 # ─────────────────────────────────────────────────────────
 # Telegram Hub Endpoints
 # ─────────────────────────────────────────────────────────
@@ -1636,3 +1631,8 @@ async def telegram_broadcast(item_id: str):
         raise
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=settings.WORKER_PORT)
