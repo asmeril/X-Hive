@@ -363,76 +363,120 @@ async def download_image(image_url: str, save_dir: str = "data/images") -> Optio
 # ═══════════════════════════════════════════════════════════
 
 # İzlenecek büyük hesaplar ve konuları
+#
+# trigger_topics: Bunlardan EN AZ BİRİ metinde geçmezse bu hedef hiç seçilmez.
+#   → Dar ve spesifik tutulmalı. "AI" gibi genel kelimeler konulmamalı.
+# score_topics:   Eşleşince puanı artırır ama tek başına nitelendirmez.
+# priority:       0-10 arası temel öncelik puanı.
+#
 SNIPER_TARGETS: Dict[str, Dict[str, Any]] = {
     "sama": {
         "name": "Sam Altman",
-        "topics": ["AI", "OpenAI", "GPT", "AGI", "startup"],
+        "trigger_topics": ["openai", "sam altman", "chatgpt", "gpt-5", "gpt5", "altman", "agi"],
+        "score_topics": ["AI", "startup", "GPT"],
         "priority": 10,
     },
     "elonmusk": {
         "name": "Elon Musk",
-        "topics": ["AI", "Tesla", "SpaceX", "X", "xAI", "Grok"],
+        "trigger_topics": ["elon musk", "tesla", "spacex", "xai", "grok", "musk", "x.com"],
+        "score_topics": ["AI", "twitter", "electric vehicle"],
         "priority": 10,
     },
     "karpathy": {
         "name": "Andrej Karpathy",
-        "topics": ["AI", "ML", "neural networks", "LLM", "deep learning"],
+        "trigger_topics": ["karpathy", "nanogpt", "minbpe", "neural network", "deep learning", "backpropagation"],
+        "score_topics": ["LLM", "AI research", "ML"],
         "priority": 9,
     },
     "ylecun": {
         "name": "Yann LeCun",
-        "topics": ["AI", "ML", "Meta", "deep learning"],
+        "trigger_topics": ["yann lecun", "lecun", "meta ai", "world model", "objective-driven ai"],
+        "score_topics": ["deep learning", "AI research", "ML"],
         "priority": 8,
     },
     "AnthropicAI": {
         "name": "Anthropic",
-        "topics": ["Claude", "AI safety", "LLM"],
+        "trigger_topics": ["anthropic", "claude", "claude 3", "constitutional ai", "dario amodei"],
+        "score_topics": ["AI safety", "LLM"],
         "priority": 8,
     },
     "OpenAI": {
         "name": "OpenAI",
-        "topics": ["GPT", "ChatGPT", "API", "AGI"],
+        "trigger_topics": ["openai", "chatgpt", "gpt-4", "gpt-5", "gpt4", "gpt5", "dall-e", "sora", "o1", "o3"],
+        "score_topics": ["AGI", "API", "AI"],
         "priority": 9,
     },
-    "GoogleAI": {
-        "name": "Google AI",
-        "topics": ["Gemini", "AI", "ML", "deep learning"],
+    "GoogleDeepMind": {
+        "name": "Google DeepMind",
+        "trigger_topics": ["deepmind", "gemini", "demis hassabis", "alphafold", "gemma"],
+        "score_topics": ["AI research", "google ai"],
         "priority": 8,
     },
     "MistralAI": {
         "name": "Mistral AI",
-        "topics": ["Mistral", "LLM", "open source AI"],
+        "trigger_topics": ["mistral", "mixtral", "le chat", "mistral ai"],
+        "score_topics": ["open source AI", "LLM"],
         "priority": 7,
     },
     "huggingface": {
         "name": "Hugging Face",
-        "topics": ["transformers", "LLM", "open source", "models"],
+        "trigger_topics": ["hugging face", "huggingface", "transformers library", "spaces", "gradio", "diffusers"],
+        "score_topics": ["open source", "model hub"],
         "priority": 7,
     },
     "TechCrunch": {
         "name": "TechCrunch",
-        "topics": ["startup", "funding", "tech", "AI"],
+        "trigger_topics": ["techcrunch", "startup funding", "series a", "series b", "ipo", "acquisition"],
+        "score_topics": ["startup", "tech", "funding"],
         "priority": 6,
     },
     "verge": {
         "name": "The Verge",
-        "topics": ["tech", "AI", "gadgets", "software"],
+        "trigger_topics": ["the verge", "consumer tech", "apple event", "android", "pixel", "iphone"],
+        "score_topics": ["gadgets", "software review"],
         "priority": 6,
     },
     "VitalikButerin": {
         "name": "Vitalik Buterin",
-        "topics": ["Ethereum", "crypto", "blockchain", "Web3"],
+        "trigger_topics": ["vitalik", "ethereum", "eth", "defi", "web3", "smart contract", "blockchain"],
+        "score_topics": ["crypto", "decentralized"],
         "priority": 7,
     },
     "pmarca": {
         "name": "Marc Andreessen",
-        "topics": ["VC", "startup", "AI", "tech", "a16z"],
+        "trigger_topics": ["andreessen", "a16z", "marc andreessen", "pmarca"],
+        "score_topics": ["VC", "venture capital", "startup"],
         "priority": 7,
     },
     "paulg": {
         "name": "Paul Graham",
-        "topics": ["startup", "YC", "essays", "programming"],
+        "trigger_topics": ["paul graham", "y combinator", "ycombinator", "pg essay"],
+        "score_topics": ["startup", "programming"],
         "priority": 7,
+    },
+    "NASA": {
+        "name": "NASA",
+        "trigger_topics": ["nasa", "space mission", "mars", "moon", "artemis", "rocket launch", "iss"],
+        "score_topics": ["space", "astronomy"],
+        "priority": 6,
+    },
+    "Reuters": {
+        "name": "Reuters",
+        "trigger_topics": ["reuters", "breaking news", "geopolitics", "war", "iran", "sanctions", "military"],
+        "score_topics": ["news", "international"],
+        "priority": 6,
+    },
+    "awscloud": {
+        "name": "AWS",
+        "trigger_topics": ["amazon web services", "aws", "amazon cloud", "ec2", "s3 bucket", "lambda"],
+        "score_topics": ["cloud computing", "devops"],
+        "priority": 6,
+    },
+    "binance": {
+        "name": "Binance",
+        "trigger_topics": ["binance", "bnb", "cz binance", "changpeng zhao", "crypto exchange"],
+        "score_topics": ["crypto", "trading"],
+        "priority": 6,
     },
 }
 
@@ -440,41 +484,52 @@ SNIPER_TARGETS: Dict[str, Dict[str, Any]] = {
 def find_sniper_targets(title: str, summary: str = "") -> List[Dict[str, Any]]:
     """
     İçerik konusuna göre hangi büyük hesapların tweetlerine reply atılabileceğini belirle.
-    
-    Args:
-        title: Haber başlığı
-        summary: Haber özeti
-        
+
+    Kural:
+    - trigger_topics listesinden EN AZ BİRİ metinde geçmeli, VEYA hesabın adı geçmeli.
+    - Sadece genel "AI" / "ML" gibi kelimeler eşleşirse → o hedef SEÇİLMEZ.
+    - score_topics eşleşmeleri yalnızca puanı artırır.
+
     Returns:
-        List of matching sniper targets with username and priority
+        List of matching sniper targets with username and priority (max 4)
     """
     text = f"{title} {summary}".lower()
     matches = []
-    
+
     for username, info in SNIPER_TARGETS.items():
-        # İçerikteki konuyla target'ın konularını eşleştir
-        topic_matches = sum(1 for topic in info["topics"] if topic.lower() in text)
-        
-        # Kullanıcı adının kendisi de geçiyor mu?
+        trigger_topics = [t.lower() for t in info.get("trigger_topics", [])]
+        score_topics   = [t.lower() for t in info.get("score_topics", [])]
+
+        # Tetikleyici: hesap adı/username geçiyor mu?
         name_match = info["name"].lower() in text or username.lower() in text
-        
-        if topic_matches >= 1 or name_match:
-            score = topic_matches * 2 + (3 if name_match else 0) + info["priority"]
-            matches.append({
-                "username": username,
-                "handle": f"@{username}",
-                "name": info["name"],
-                "relevance_score": score,
-                "topic_matches": topic_matches,
-            })
-    
-    # Skora göre sırala
+
+        # Tetikleyici: trigger_topics'ten en az biri geçiyor mu?
+        trigger_hit = any(t in text for t in trigger_topics)
+
+        # Nitelendirme koşulu: name_match VEYA trigger_hit gerekli
+        if not (name_match or trigger_hit):
+            continue
+
+        # Puan hesapla
+        trigger_count = sum(1 for t in trigger_topics if t in text)
+        score_count   = sum(1 for t in score_topics   if t in text)
+        score = trigger_count * 3 + score_count * 1 + (4 if name_match else 0) + info["priority"]
+
+        matches.append({
+            "username": username,
+            "handle": f"@{username}",
+            "name": info["name"],
+            "relevance_score": score,
+            "topic_matches": trigger_count + score_count,
+        })
+
+    # Skora göre sırala, max 4 hedef döndür
     matches.sort(key=lambda x: x["relevance_score"], reverse=True)
-    
-    # Max 5 target
-    result = matches[:5]
+    result = matches[:4]
     if result:
         logger.info(f"🎯 Sniper targets found: {[m['handle'] for m in result]}")
+    else:
+        logger.debug("🎯 No sniper targets matched for this content")
     return result
 
 

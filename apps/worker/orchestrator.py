@@ -475,7 +475,7 @@ class Orchestrator:
 
                 # AI: Viral skorla → En iyi N'ini seç → TR+EN thread üret
                 try:
-                    results = await self.ai_generator.generate_viral_threads(fresh_items, top_n=5)
+                    results = await self.ai_generator.generate_viral_threads(fresh_items, top_n=3)
 
                     # 🔍 Visibility Enrichment: mentions, keywords, image, sniper targets
                     try:

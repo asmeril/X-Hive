@@ -133,8 +133,9 @@ class AIContentGenerator:
                 
                 # Check if it's a rate limit error (429)
                 if "429" in error_msg or "quota" in error_msg.lower() or "RESOURCE_EXHAUSTED" in error_msg:
-                    # Gemini rate limit: minimum 15s bekleme gerekli
-                    retry_delay = max(15.0, initial_delay * (2 ** attempt))
+                    # Gemini free tier: RPM=2, minimum 30s bekleme yeterli
+                    # Exponential: 30s → 60s → 120s → 240s → 480s
+                    retry_delay = max(30.0, initial_delay * (2 ** attempt))
                     logger.warning(f"⏳ Rate limit hit (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay:.1f}s...")
                     if attempt < max_retries - 1:
                         await asyncio.sleep(retry_delay)
@@ -465,7 +466,7 @@ SADECE aşağıdaki formatta JSON döndür, başka hiçbir şey yazma:
 [{{"index": 1, "score": 8}}, {{"index": 2, "score": 3}}, ...]
 """
         try:
-            response = await self._generate_with_retry(prompt, max_retries=3, initial_delay=15.0)
+            response = await self._generate_with_retry(prompt, max_retries=5, initial_delay=15.0)
             # JSON parse
             import json as _json
             # Temizle (bazen ```json ... ``` ile sarar)
@@ -612,7 +613,7 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
 """
         
         try:
-            raw = await self._generate_with_retry(prompt, max_retries=3, initial_delay=15.0)
+            raw = await self._generate_with_retry(prompt, max_retries=5, initial_delay=15.0)
             # --- ile ayır
             tweets = [t.strip() for t in raw.split("---") if t.strip()]
             
@@ -633,7 +634,7 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
             else:
                 return [f"🧵 {f['title']}\n\nDetails 👇\n{f['url']} #Tech"]
 
-    async def generate_viral_threads(self, items: list, top_n: int = 5) -> list:
+    async def generate_viral_threads(self, items: list, top_n: int = 3) -> list:
         """
         Tam pipeline: Viral skorla → En iyi N'ini seç → TR + EN thread üret.
         
@@ -644,6 +645,10 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
         
         # 1. Viral skorlama
         scored = await self.score_viral_potential(items)
+        
+        # Skorlama bitti, thread üretimine geçmeden önce Gemini rate limit için bekle
+        logger.info("⏳ Scoring complete, waiting 45s before thread generation (Gemini free tier)...")
+        await asyncio.sleep(45)
         
         # 2. En iyi N tanesini al (skor >= 6 olanları öncelikle)
         top_items = scored[:top_n]
@@ -661,8 +666,9 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
             
             try:
                 # TR thread üret, ardından EN (sıralı — rate limit koruması)
+                # Gemini free tier RPM=2: her istek arasında min 35s bekleme
                 tr_thread = await self.generate_thread(item, language="tr")
-                await asyncio.sleep(4)  # Gemini rate limit arası bekleme
+                await asyncio.sleep(35)  # Gemini rate limit arası bekleme (free tier)
                 en_thread = await self.generate_thread(item, language="en")
                 
                 results.append({
@@ -673,8 +679,8 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
                 })
                 logger.info(f"\u2705 Threads ready (score={viral_score}): {self._extract_content_fields(item)['title'][:50]}...")
                 
-                # İtemler arası bekleme (Gemini free tier)
-                await asyncio.sleep(6)
+                # İtemler arası bekleme (Gemini free tier: bir sonraki item öncesi)
+                await asyncio.sleep(35)
                 
             except Exception as e:
                 logger.error(f"❌ Thread generation failed for item: {e}")
