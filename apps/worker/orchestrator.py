@@ -1,8 +1,10 @@
 import asyncio
 import sys
 import logging
-from datetime import datetime, time, timedelta
-from typing import Optional, Dict, Any
+import json
+from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
+from typing import Optional, Dict, Any, Set
 from dataclasses import dataclass, field
 
 # Windows fix for Playwright subprocess on Python 3.12+ (must be before chrome_pool import)
@@ -57,7 +59,8 @@ class OrchestratorConfig:
     intel_interval_hours: int = 6  # Collect intel every 6 hours
     intel_sources: list = field(default_factory=lambda: [
         "github", "google_trends", "hackernews", "reddit", "producthunt",
-        "twitter", "arxiv", "huggingface", "substack", "perplexity", "youtube", "linkedin", "telegram"
+        "arxiv", "huggingface", "substack", "perplexity", "telegram"
+        # twitter: cookie gerektirir; youtube/linkedin: güvenilir değil
     ])
 
     # AI Generation
@@ -98,6 +101,14 @@ class Orchestrator:
         """
 
         self.config = config or OrchestratorConfig()
+
+        # ─── Seen-URL persistent store ───────────────────────────────────────
+        # Her işlenmiş URL burada saklanır; bir sonraki taramada tekrar eklenmez.
+        self._seen_urls_file = Path("data/seen_urls.json")
+        self._seen_urls_file.parent.mkdir(parents=True, exist_ok=True)
+        self._seen_urls: Dict[str, str] = self._load_seen_urls()  # {url: iso_timestamp}
+        self._seen_url_ttl_days = 14  # 14 günden eski kayıtları otomatik temizle
+        logger.info(f"📌 Seen-URL store: {len(self._seen_urls)} URLs tracked")
 
         # Initialize components
         self.chrome_pool = ChromePool()
@@ -271,8 +282,44 @@ class Orchestrator:
                 logger.error(f"❌ Error in intel collection loop: {e}")
                 await asyncio.sleep(600)  # Retry after 10 minutes
 
+    def _load_seen_urls(self) -> Dict[str, str]:
+        """Disk'ten seen-URL kayıtlarını yükler."""
+        try:
+            if self._seen_urls_file.exists():
+                return json.loads(self._seen_urls_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"⚠️ seen_urls.json okunamadı, temiz başlanıyor: {e}")
+        return {}
+
+    def _save_seen_urls(self) -> None:
+        """Seen-URL kayıtlarını disk'e yazar ve eski girişleri temizler."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=self._seen_url_ttl_days)).isoformat()
+        self._seen_urls = {u: t for u, t in self._seen_urls.items() if t >= cutoff}
+        try:
+            self._seen_urls_file.write_text(
+                json.dumps(self._seen_urls, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+        except Exception as e:
+            logger.error(f"❌ seen_urls.json kaydedilemedi: {e}")
+
+    def _mark_urls_seen(self, urls: list) -> None:
+        """Verilen URL'leri seen-store'a ekler ve kaydeder."""
+        now = datetime.now(timezone.utc).isoformat()
+        for url in urls:
+            if url:
+                self._seen_urls[url] = now
+        self._save_seen_urls()
+
+    def _filter_seen(self, items: list) -> list:
+        """Daha önce işlenmiş URL'lere sahip item'ları döndürülen listeden çıkarır."""
+        fresh = [item for item in items if item.url not in self._seen_urls]
+        skipped = len(items) - len(fresh)
+        if skipped:
+            logger.info(f"🔁 {skipped} item zaten işlenmiş (seen-URL), atlandı")
+        return fresh
+
     async def run_intel_collection_once(self) -> Dict[str, Any]:
-        """Runs a single pass of the intel collection process manually or via loop."""
         logger.info("📡 Running intel collection pass...")
         all_items = []
         
@@ -307,83 +354,101 @@ class Orchestrator:
 
             if "reddit" in self.config.intel_sources:
                 try:
-                    reddit = RedditSource(limit=3)
-                    items = await reddit.fetch_latest()
+                    reddit = RedditSource(limit=5)
+                    items = await asyncio.wait_for(reddit.fetch_latest(), timeout=45.0)
                     all_items.extend(items)
                     logger.info(f"✅ Reddit: {len(items)} items collected")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ Reddit: Timeout 45s (atlandı)")
                 except Exception as e:
-                    logger.error(f"❌ Error collecting from Reddit: {e}")
+                    logger.warning(f"⚠️ Reddit bağlanamadı (atlandı): {e}")
 
             if "producthunt" in self.config.intel_sources:
                 try:
-                    ph = ProductHuntSource(limit=3)
-                    items = await ph.fetch_latest()
+                    ph = ProductHuntSource(limit=10)
+                    items = await asyncio.wait_for(ph.fetch_latest(), timeout=20.0)
                     all_items.extend(items)
                     logger.info(f"✅ ProductHunt: {len(items)} items collected")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ ProductHunt: Timeout 20s")
                 except Exception as e:
                     logger.error(f"❌ Error collecting from ProductHunt: {e}")
 
             if "twitter" in self.config.intel_sources:
                 try:
                     ts = TwitterSource(limit=3)
-                    items = await ts.fetch_latest()
+                    items = await asyncio.wait_for(ts.fetch_latest(), timeout=15.0)
                     all_items.extend(items)
                     logger.info(f"✅ Twitter: {len(items)} items collected")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ Twitter: Timeout 15s (atlandı)")
                 except Exception as e:
-                    logger.error(f"❌ Error collecting from Twitter: {e}")
+                    logger.warning(f"⚠️ Twitter bağlanamadı (atlandı): {e}")
 
             if "arxiv" in self.config.intel_sources:
                 try:
-                    arx = ArxivSource(limit=3)
-                    items = await arx.fetch_latest()
-                    all_items.extend(items)
-                    logger.info(f"✅ Arxiv: {len(items)} items collected")
+                    arx = ArxivSource(max_results=20)
+                    items = await asyncio.wait_for(arx.fetch_latest(), timeout=20.0)
+                    all_items.extend(items[:8])
+                    logger.info(f"✅ Arxiv: {len(items[:8])} items collected")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ Arxiv: Timeout 20s")
                 except Exception as e:
                     logger.error(f"❌ Error collecting from Arxiv: {e}")
 
             if "huggingface" in self.config.intel_sources:
                 try:
-                    items = await huggingface_source.fetch_latest()
-                    all_items.extend(items[:3])
-                    logger.info(f"✅ HuggingFace: {len(items[:3])} items collected")
+                    items = await asyncio.wait_for(huggingface_source.fetch_latest(), timeout=20.0)
+                    all_items.extend(items[:8])
+                    logger.info(f"✅ HuggingFace: {len(items[:8])} items collected")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ HuggingFace: Timeout 20s")
                 except Exception as e:
                     logger.error(f"❌ Error collecting from HuggingFace: {e}")
 
             if "substack" in self.config.intel_sources:
                 try:
                     sub = SubstackScraper()
-                    items = await sub.fetch_latest()
-                    all_items.extend(items[:3])
-                    logger.info(f"✅ Substack: {len(items[:3])} items collected")
+                    items = await asyncio.wait_for(sub.fetch_latest(), timeout=15.0)
+                    all_items.extend(items[:5])
+                    logger.info(f"✅ Substack: {len(items[:5])} items collected")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ Substack: Timeout 15s (atlandı)")
                 except Exception as e:
-                    logger.error(f"❌ Error collecting from Substack: {e}")
+                    logger.warning(f"⚠️ Substack bağlanamadı (atlandı): {e}")
 
             if "perplexity" in self.config.intel_sources:
                 try:
                     px = PerplexityScraper()
-                    items = await px.fetch_latest()
-                    all_items.extend(items[:3])
-                    logger.info(f"✅ Perplexity: {len(items[:3])} items collected")
+                    items = await asyncio.wait_for(px.fetch_latest(), timeout=15.0)
+                    all_items.extend(items[:5])
+                    logger.info(f"✅ Perplexity: {len(items[:5])} items collected")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ Perplexity: Timeout 15s (atlandı)")
                 except Exception as e:
-                    logger.error(f"❌ Error collecting from Perplexity: {e}")
+                    logger.warning(f"⚠️ Perplexity bağlanamadı (atlandı): {e}")
 
             if "youtube" in self.config.intel_sources:
                 try:
                     yt = YouTubeSource()
-                    items = await yt.fetch_latest()
-                    all_items.extend(items[:3])
-                    logger.info(f"✅ YouTube: {len(items[:3])} items collected")
+                    items = await asyncio.wait_for(yt.fetch_latest(), timeout=15.0)
+                    all_items.extend(items[:5])
+                    logger.info(f"✅ YouTube: {len(items[:5])} items collected")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ YouTube: Timeout 15s (atlandı)")
                 except Exception as e:
-                    logger.error(f"❌ Error collecting from YouTube: {e}")
+                    logger.warning(f"⚠️ YouTube bağlanamadı (atlandı): {e}")
 
             if "linkedin" in self.config.intel_sources:
                 try:
                     li = LinkedInSource()
-                    items = await li.fetch_latest()
-                    all_items.extend(items[:3])
-                    logger.info(f"✅ LinkedIn: {len(items[:3])} items collected")
+                    items = await asyncio.wait_for(li.fetch_latest(), timeout=15.0)
+                    all_items.extend(items[:5])
+                    logger.info(f"✅ LinkedIn: {len(items[:5])} items collected")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ LinkedIn: Timeout 15s (atlandı)")
                 except Exception as e:
-                    logger.error(f"❌ Error collecting from LinkedIn: {e}")
+                    logger.warning(f"⚠️ LinkedIn bağlanamadı (atlandı): {e}")
 
             if "telegram" in self.config.intel_sources:
                 try:
@@ -397,15 +462,21 @@ class Orchestrator:
 
             # ─── VIRAL SCORING & THREAD GENERATION PIPELINE ───
             if all_items and self.config.ai_enabled:
-                logger.info(f"🚀 Starting viral thread pipeline for {len(all_items)} items...")
-                
+                # Daha önce işlenmiş URL'leri çıkar
+                fresh_items = self._filter_seen(all_items)
+                if not fresh_items:
+                    logger.info("ℹ️ Tüm toplanan içerikler zaten işlenmiş, yeni tarama gerekli değil.")
+                    return {"status": "success", "items_collected": len(all_items), "fresh": 0}
+
+                logger.info(f"🚀 Starting viral thread pipeline for {len(fresh_items)} fresh items (of {len(all_items)} collected)...")
+
                 # Eski pending'leri temizle (yeni tarama yapıyoruz)
                 approval_queue.clear_pending()
-                
+
                 # AI: Viral skorla → En iyi N'ini seç → TR+EN thread üret
                 try:
-                    results = await self.ai_generator.generate_viral_threads(all_items, top_n=8)
-                    
+                    results = await self.ai_generator.generate_viral_threads(fresh_items, top_n=8)
+
                     # 🔍 Visibility Enrichment: mentions, keywords, image, sniper targets
                     try:
                         results = await enrich_batch(results)
@@ -432,7 +503,10 @@ class Orchestrator:
                         )
                     
                     logger.info(f"🎉 Viral pipeline complete: {len(results)} threads queued for approval")
-                    
+
+                    # ✅ İşlenen URL'leri seen-store'a kaydet (tekrar işlenmesini engeller)
+                    self._mark_urls_seen([e["item"].url for e in results if e.get("item")])
+
                     # 📲 Telegram bildirim: Thread'ler hazır
                     try:
                         from telegram_hub import get_telegram_hub
@@ -444,15 +518,17 @@ class Orchestrator:
                         logger.debug(f"Telegram notification skipped: {tg_err}")
                 except Exception as e:
                     logger.error(f"❌ Viral pipeline failed, falling back to simple tweets: {e}")
-                    # Fallback: eski tek-tweet yöntemi (ilk 10 item)
-                    for item in all_items[:10]:
+                    # Fallback: eski tek-tweet yöntemi (ilk 10 fresh item)
+                    fallback_items = fresh_items[:10]
+                    for item in fallback_items:
                         try:
                             tweet = await self.ai_generator.generate_tweet_from_content(item)
                             approval_queue.add(content_item=item, generated_tweet=tweet)
                         except Exception as e2:
                             logger.error(f"❌ Fallback tweet generation failed: {e2}")
+                    self._mark_urls_seen([i.url for i in fallback_items])
 
-            logger.info(f"✅ Intel collection pass complete. {len(all_items)} items processed.")
+            logger.info(f"✅ Intel collection pass complete. {len(all_items)} items collected, fresh={len(fresh_items) if 'fresh_items' in dir() else len(all_items)}.")
             return {"status": "success", "items_collected": len(all_items)}
 
         except Exception as e:

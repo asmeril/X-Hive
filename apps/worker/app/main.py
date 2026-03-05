@@ -127,7 +127,7 @@ async def lifespan(app: FastAPI):
             # Intel collection
             intel_enabled=True,
             intel_interval_hours=6,  # Her 6 saatte bir içerik topla
-            intel_sources=["github", "google_trends", "hackernews", "reddit", "producthunt", "twitter", "arxiv", "huggingface", "substack", "perplexity", "youtube", "linkedin", "telegram"],
+            intel_sources=["github", "google_trends", "hackernews", "reddit", "producthunt", "arxiv", "huggingface", "substack", "perplexity", "telegram"],
 
             # AI content generation
             ai_enabled=True,
