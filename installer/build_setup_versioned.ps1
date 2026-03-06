@@ -72,15 +72,30 @@ if ($Version -ne "") {
     Write-Host "[INFO] Aday versiyon: $currentVersion -> $newVersion" -ForegroundColor Cyan
 }
 
-# --- tauri.conf.json versiyonunu guncelle ---
+# --- tauri.conf.json versiyonunu SADECE FullBuild'te guncelle ---
+# Fast build'de (worker-only degisiklik) binary derlenmediginden
+# tauri.conf.json degistirmek UI versiyonunu yaniltir.
 $tauriConfPath = Join-Path $desktopDir "src-tauri\tauri.conf.json"
-if (Test-Path $tauriConfPath) {
-    $tauriConf = Get-Content $tauriConfPath -Raw
-    $tauriConf = $tauriConf -replace '"version":\s*"[^"]+"', ('"version": "' + $newVersion + '"')
-    $tauriConf | Set-Content $tauriConfPath -Encoding UTF8 -NoNewline
-    Write-Host "[OK] tauri.conf.json versiyonu -> $newVersion" -ForegroundColor Green
+if ($FullBuild) {
+    if (Test-Path $tauriConfPath) {
+        $tauriConf = Get-Content $tauriConfPath -Raw
+        $tauriConf = $tauriConf -replace '"version":\s*"[^"]+"', ('"version": "' + $newVersion + '"')
+        $tauriConf | Set-Content $tauriConfPath -Encoding UTF8 -NoNewline
+        Write-Host "[OK] tauri.conf.json versiyonu -> $newVersion" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] tauri.conf.json bulunamadi: $tauriConfPath" -ForegroundColor Yellow
+    }
 } else {
-    Write-Host "[WARN] tauri.conf.json bulunamadi: $tauriConfPath" -ForegroundColor Yellow
+    # Fast build: mevcut tauri.conf.json versiyonunu oku, onu kullan
+    if (Test-Path $tauriConfPath) {
+        $existingConf = Get-Content $tauriConfPath -Raw
+        if ($existingConf -match '"version":\s*"([^"]+)"') {
+            $binaryVersion = $Matches[1]
+            # Installer adinda binary versiyonu kullan (yaniltici olmamasi icin)
+            $newVersion = $binaryVersion
+            Write-Host "[INFO] Fast build: Tauri binary versiyonu kullaniliyor -> $binaryVersion" -ForegroundColor Cyan
+        }
+    }
 }
 
 # --- FullBuild: once Tauri build ---
@@ -132,6 +147,10 @@ try {
 }
 
 Set-Content -Path $versionFile -Value $newVersion -Encoding ascii
-Write-Host "[OK] Derleme tamamlandı ve versiyon kalıcılaştırıldı: $newVersion" -ForegroundColor Green
+if ($FullBuild) {
+    Write-Host "[OK] FullBuild tamamlandi, versiyon kalicilasiltirildi: $newVersion" -ForegroundColor Green
+} else {
+    Write-Host "[OK] Fast build tamamlandi (Tauri binary: $newVersion)" -ForegroundColor Green
+}
 Write-Host "[OK] Output: $(Join-Path $installerDir 'output')" -ForegroundColor Green
 Write-Host "[INFO] Temiz kurulum (eski sürümü kaldır + yeniyi kur): .\\install_latest_clean.ps1" -ForegroundColor Cyan
