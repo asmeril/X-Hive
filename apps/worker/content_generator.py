@@ -8,8 +8,9 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from telegram_bot import TelegramApprovalBot, ApprovalStatus
 from task_queue import TaskQueue, TaskPriority
+# TelegramApprovalBot artık kullanılmıyor — onay TelegramHub üzerinden sağlanıyor
+# (iki ayrı polling başlatmak 409 Conflict'e neden oluyordu)
 
 logger = logging.getLogger(__name__)
 
@@ -34,17 +35,15 @@ class ContentGenerator:
     """
     
     def __init__(self):
-        self.telegram_bot: Optional[TelegramApprovalBot] = None
+        self.telegram_bot = None  # Devre dışı — TelegramHub polling yapıyor
         self.task_queue: Optional[TaskQueue] = None
         logger.info("✅ ContentGenerator initialized")
     
     async def start(self) -> None:
         """Start content generator"""
-        # Initialize Telegram bot
-        self.telegram_bot = TelegramApprovalBot()
-        await self.telegram_bot.start()
-        
-        # Initialize TaskQueue
+        # TelegramApprovalBot BAŞLATILMIYOR — TelegramHub zaten aynı token ile
+        # polling yapıyor; iki instance aynı anda çalışırsa Telegram 409 verir.
+        # Onay akışı artık approval_queue + TelegramHub üzerinden yürüyor.
         self.task_queue = TaskQueue()
         await self.task_queue.start()
         
@@ -52,10 +51,7 @@ class ContentGenerator:
     
     async def stop(self) -> None:
         """Stop content generator"""
-        if self.telegram_bot:
-            await self.telegram_bot.stop()
-        
-        if self.task_queue:
+        # telegram_bot is None — no stop needed
             await self.task_queue.stop()
         
         logger.info("🛑 ContentGenerator stopped")
