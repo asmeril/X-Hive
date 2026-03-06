@@ -72,6 +72,17 @@ if ($Version -ne "") {
     Write-Host "[INFO] Aday versiyon: $currentVersion -> $newVersion" -ForegroundColor Cyan
 }
 
+# --- tauri.conf.json versiyonunu guncelle ---
+$tauriConfPath = Join-Path $desktopDir "src-tauri\tauri.conf.json"
+if (Test-Path $tauriConfPath) {
+    $tauriConf = Get-Content $tauriConfPath -Raw
+    $tauriConf = $tauriConf -replace '"version":\s*"[^"]+"', "\"version\": \"$newVersion\""
+    $tauriConf | Set-Content $tauriConfPath -Encoding UTF8 -NoNewline
+    Write-Host "[OK] tauri.conf.json versiyonu -> $newVersion" -ForegroundColor Green
+} else {
+    Write-Host "[WARN] tauri.conf.json bulunamadi: $tauriConfPath" -ForegroundColor Yellow
+}
+
 # --- FullBuild: once Tauri build ---
 if ($FullBuild) {
     Write-Host "[INFO] -FullBuild: Tauri build baslatiliyor..." -ForegroundColor Yellow
