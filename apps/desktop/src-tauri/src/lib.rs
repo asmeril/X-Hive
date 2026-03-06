@@ -393,10 +393,150 @@ async fn call_worker_api(method: String, endpoint: String, body: Option<String>)
     }
 }
 
+/// Sistem tanı ve otomatik onarım: çakışan Python süreçlerini/portları tespit edip temizle.
+/// Frontend'den çağrılır, JSON rapor döndürür.
+#[tauri::command]
+fn system_diagnose_and_fix() -> String {
+    let ps_script = r#"
+$r = @{
+    timestamp       = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+    python_procs    = @()
+    killed_pids     = @()
+    port_listeners  = 0
+    api_ok          = $false
+    api_error       = ""
+    fixes_applied   = @()
+}
+
+# 1. Tüm app.main Python süreçleri
+$all = Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -like "python*" -and $_.CommandLine -match "-m app\.main"
+}
+$r.python_procs = @($all | ForEach-Object {
+    @{
+        pid  = [int]$_.ProcessId
+        type = if ($_.CommandLine -match "\.venv") { "venv" } else { "global" }
+        cmd  = $_.CommandLine.Substring(0, [Math]::Min($_.CommandLine.Length, 90))
+    }
+})
+$r.python_count = $all.Count
+
+# 2. Global (zombie) süreçleri öldür
+$global_procs = @($all | Where-Object { $_.CommandLine -notmatch "\.venv" })
+foreach ($proc in $global_procs) {
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+    $r.killed_pids += [int]$proc.ProcessId
+    $r.fixes_applied += "Killed global Python PID $($proc.ProcessId)"
+}
+
+# 3. Fazla venv süreci varsa (birden fazla) en eskisini öldür
+$venv_procs = @($all | Where-Object { $_.CommandLine -match "\.venv" })
+if ($venv_procs.Count -gt 1) {
+    $sorted = $venv_procs | Sort-Object ProcessId -Descending
+    $to_kill = $sorted | Select-Object -Skip 1
+    foreach ($proc in $to_kill) {
+        Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+        $r.killed_pids += [int]$proc.ProcessId
+        $r.fixes_applied += "Killed duplicate venv Python PID $($proc.ProcessId)"
+    }
+}
+
+# 4. Port 8765 listener sayısı
+$r.port_listeners = @(netstat -ano | Select-String ":8765\s.*LISTEN").Count
+
+# 5. API sağlık kontrolü
+try {
+    $resp = Invoke-RestMethod "http://localhost:8765/system/status" -TimeoutSec 3
+    $r.api_ok = $true
+    $r.orchestrator_running = $resp.services.orchestrator.running
+    $r.scheduler_running    = $resp.services.scheduler.running
+} catch {
+    $r.api_ok    = $false
+    $r.api_error = $_.Exception.Message -replace "`n"," "
+}
+
+# 6. Son stderr log (hata satırlarını özetle)
+$stderr_path = "$env:LOCALAPPDATA\XHive\worker\backend_stderr.log"
+if (Test-Path $stderr_path) {
+    $last_errors = Get-Content $stderr_path -Tail 80 |
+        Select-String "Conflict|KeyError|ImportError|CRITICAL|ERROR:" |
+        Select-Object -Last 5 |
+        ForEach-Object { $_.Line.Trim() }
+    $r.recent_errors = @($last_errors)
+} else {
+    $r.recent_errors = @()
+}
+
+$r | ConvertTo-Json -Depth 4
+"#;
+
+    #[cfg(target_os = "windows")]
+    {
+        match Command::new("powershell.exe")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script])
+            .creation_flags(0x08000000)
+            .output()
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                if stdout.trim().is_empty() {
+                    r#"{"error":"Tanı scripti çıktı vermedi"}"#.to_string()
+                } else {
+                    stdout.trim().to_string()
+                }
+            }
+            Err(e) => format!(r#"{{"error":"Script başlatılamadı: {}"}}"#, e),
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        r#"{"error":"Bu özellik yalnızca Windows'ta desteklenir"}"#.to_string()
+    }
+}
+
+/// Arka planda her 90 saniyede bir sessizce zombie Python süreçlerini temizle.
+fn start_background_health_monitor() {
+    thread::spawn(|| {
+        // İlk çalıştırmayı biraz geciktir (worker başlasın)
+        thread::sleep(Duration::from_secs(75));
+        loop {
+            #[cfg(target_os = "windows")]
+            {
+                let ps = r#"
+Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -like "python*" -and $_.CommandLine -match "-m app\.main"
+} | ForEach-Object {
+    $is_global = $_.CommandLine -notmatch "\.venv"
+    if ($is_global) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+# Fazla venv süreci
+$venv = @(Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -like "python*" -and $_.CommandLine -match "\.venv.*-m app\.main"
+})
+if ($venv.Count -gt 1) {
+    $venv | Sort-Object ProcessId -Descending | Select-Object -Skip 1 |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+"#;
+                let _ = Command::new("powershell.exe")
+                    .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps])
+                    .creation_flags(0x08000000)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+            thread::sleep(Duration::from_secs(90));
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Start backend before starting Tauri
     start_backend();
+
+    // Arka plan sağlık monitörü: her 90s'de zombie süreçleri temizle
+    start_background_health_monitor();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -404,7 +544,8 @@ pub fn run() {
             greet,
             check_worker_health,
             call_worker_api,
-            shutdown_backend_processes
+            shutdown_backend_processes,
+            system_diagnose_and_fix
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
