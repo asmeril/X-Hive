@@ -61,9 +61,9 @@ const ApprovalInterface: React.FC = () => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [langTab, setLangTab] = useState<Record<string, "tr" | "en">>({});
 
-  const fetchItems = useCallback(async () => {
+  const fetchItems = useCallback(async (showSpinner: boolean = true): Promise<number> => {
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
       setError(null);
       const response = await invoke<string>("call_worker_api", {
         method: "GET",
@@ -72,17 +72,20 @@ const ApprovalInterface: React.FC = () => {
       const parsed: ApiResponse = JSON.parse(response);
       if (parsed.status === "success" && parsed.data?.items) {
         setItems(parsed.data.items);
+        return parsed.data.items.length;
       } else {
         setItems([]);
+        return 0;
       }
     } catch (e: any) {
       setError(e.message || "Bağlantı hatası");
+      return 0;
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { fetchItems(); }, [fetchItems]);
+  useEffect(() => { fetchItems(true); }, [fetchItems]);
 
   const handleScan = async () => {
     setScanning(true);
@@ -92,20 +95,16 @@ const ApprovalInterface: React.FC = () => {
         method: "POST",
         endpoint: "/system/force-intel",
       });
-      // Poll until done (check every 15s, max 5 min)
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        await fetchItems();
-        if (items.length > 0 || attempts > 20) {
-          clearInterval(poll);
-          setScanning(false);
-        }
-      }, 15000);
-      // Also show message
-      setTimeout(() => fetchItems(), 30000);
+
+      // Poll until data arrives (every 15s, max 5 min) — stale state kullanılmaz.
+      for (let attempts = 0; attempts < 20; attempts++) {
+        await new Promise((resolve) => setTimeout(resolve, 15000));
+        const count = await fetchItems(false);
+        if (count > 0) break;
+      }
     } catch (e: any) {
       setError(e.message);
+    } finally {
       setScanning(false);
     }
   };

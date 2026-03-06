@@ -508,6 +508,7 @@ fn start_background_health_monitor() {
     thread::spawn(|| {
         // İlk çalıştırmayı biraz geciktir (worker başlasın)
         thread::sleep(Duration::from_secs(75));
+        let mut consecutive_failures = 0u32;
         loop {
             #[cfg(target_os = "windows")]
             {
@@ -537,16 +538,68 @@ if ($venv.Count -gt 1) {
 
             // Backend ölmüşse otomatik yeniden başlat
             let backend_alive = reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(3))
+                .timeout(Duration::from_secs(6))
                 .build()
                 .ok()
                 .and_then(|c| c.get("http://127.0.0.1:8765/health").send().ok())
                 .map(|r| r.status().is_success())
                 .unwrap_or(false);
 
-            if !backend_alive {
-                debug_log("Health monitor: backend not responding, auto-restarting...");
-                start_backend();
+            if backend_alive {
+                consecutive_failures = 0;
+            } else {
+                consecutive_failures += 1;
+                debug_log(&format!(
+                    "Health monitor: /health failed ({}/3)",
+                    consecutive_failures
+                ));
+
+                // Tek seferlik timeout'ta restart etme; 3 ardışık başarısızlık bekle.
+                if consecutive_failures >= 3 {
+                    // Yalnızca gerçekten süreç/listener yoksa restart tetikle.
+                    let has_listener = Command::new("powershell.exe")
+                        .args([
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-Command",
+                            "@(netstat -ano | Select-String ':8765\\s.*LISTEN').Count",
+                        ])
+                        .creation_flags(0x08000000)
+                        .output()
+                        .ok()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        .unwrap_or_default();
+
+                    let has_python = Command::new("powershell.exe")
+                        .args([
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-Command",
+                            "@(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match '-m app\\.main' }).Count",
+                        ])
+                        .creation_flags(0x08000000)
+                        .output()
+                        .ok()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        .unwrap_or_default();
+
+                    let listener_count = has_listener.parse::<u32>().unwrap_or(0);
+                    let python_count = has_python.parse::<u32>().unwrap_or(0);
+
+                    if listener_count == 0 && python_count == 0 {
+                        debug_log("Health monitor: backend absent, auto-restarting...");
+                        start_backend();
+                    } else {
+                        debug_log(&format!(
+                            "Health monitor: skip restart (listener={}, python={})",
+                            listener_count, python_count
+                        ));
+                    }
+
+                    consecutive_failures = 0;
+                }
             }
 
             thread::sleep(Duration::from_secs(90));
