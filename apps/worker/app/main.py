@@ -150,15 +150,23 @@ async def lifespan(app: FastAPI):
     logger.info("🎉 X-HIVE Worker startup complete!")
     
     # Start Telegram Hub (notifications + mobile approval + channel broadcast)
-    try:
-        from telegram_hub import start_telegram_hub
-        tg_ok = await start_telegram_hub()
-        if tg_ok:
-            logger.info("✅ Telegram Hub started (notifications + mobile approval + channel)")
-        else:
-            logger.warning("⚠️ Telegram Hub disabled (missing token or library)")
-    except Exception as e:
-        logger.warning(f"⚠️ Telegram Hub start failed (non-critical): {e}")
+    # Default: DISABLED to avoid Telegram 409 polling conflicts crashing worker.
+    # Set TELEGRAM_HUB_ENABLED=true to re-enable.
+    telegram_hub_enabled = os.getenv("TELEGRAM_HUB_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    if telegram_hub_enabled:
+        try:
+            from telegram_hub import start_telegram_hub
+            tg_ok = await start_telegram_hub()
+            if tg_ok:
+                logger.info("✅ Telegram Hub started (notifications + mobile approval + channel)")
+            else:
+                logger.warning("⚠️ Telegram Hub disabled (missing token or library)")
+        except Exception as e:
+            logger.warning(f"⚠️ Telegram Hub start failed (non-critical): {e}")
+    else:
+        logger.info("ℹ️ Telegram Hub polling disabled (TELEGRAM_HUB_ENABLED=false)")
     
     # Check daily reminder
     safety_logger.check_daily_reminder()
@@ -168,13 +176,14 @@ async def lifespan(app: FastAPI):
     # ───────── SHUTDOWN ─────────
     logger.info("🛑 X-HIVE Worker shutting down...")
     
-    # Stop Telegram Hub
-    try:
-        from telegram_hub import stop_telegram_hub
-        await stop_telegram_hub()
-        logger.info("✅ Telegram Hub stopped")
-    except Exception as e:
-        logger.error(f"Error stopping Telegram Hub: {e}")
+    # Stop Telegram Hub (only if it was enabled)
+    if telegram_hub_enabled:
+        try:
+            from telegram_hub import stop_telegram_hub
+            await stop_telegram_hub()
+            logger.info("✅ Telegram Hub stopped")
+        except Exception as e:
+            logger.error(f"Error stopping Telegram Hub: {e}")
     
     # Stop X Daemon
     try:
