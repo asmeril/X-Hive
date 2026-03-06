@@ -114,6 +114,13 @@ npm run tauri dev
 2. Twitter cookie'sini yenile → `%LOCALAPPDATA%\XHive\worker\cookies\twitter.json`
 3. `http://127.0.0.1:8765/health` → 200 OK kontrolü yap
 
+### Troubleshooting (Telegram 409)
+- Belirti: Durum sekmesinde `API Yanıt Yok`, `0 listener`, backend'in anlık düşmesi
+- Olası neden: Aynı bot token ile birden fazla polling (`getUpdates`) çalışması
+- Hızlı stabilizasyon: `.env` içinde `TELEGRAM_HUB_ENABLED=false`
+- Etki: Telegram Hub tabanlı onay/bildirim/kanal yayın özellikleri geçici devre dışı kalır, backend stabil kalır
+- Hub'ı tekrar açma: `TELEGRAM_HUB_ENABLED=true` yalnızca token tek-poller garantisi sağlandıktan sonra
+
 ## Modules
 
 - **apps/desktop**: Tauri + React UI for approval interface

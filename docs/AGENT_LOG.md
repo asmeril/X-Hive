@@ -109,3 +109,23 @@ Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabi
 - Doğrulama: `installer/output` klasöründe yeni dosya görüldü; setup sürümü `1.1.1` olarak doğrulandı
 - Risk/Açık Konu: `x-hive-desktop.exe` timestamp'i değişmedi (incremental/no-op build olasılığı); release öncesi gerekirse clean rebuild stratejisi uygulanmalı
 - Sonraki Adım: Bu publish koşusunu git commit/push ile finalize etmek ve kurulu sürüm üstüne temiz upgrade testi yapmak
+
+## 2026-03-07 00:35 - Telegram 409 Kaynaklı Backend Düşmesi ve Stabilizasyon
+- Kapsam: `apps/worker/app/main.py`, `apps/worker/content_generator.py`, `apps/desktop/src-tauri/src/lib.rs`, `apps/desktop/src/components/ApprovalInterface.tsx`, `installer/build_setup_versioned.ps1`
+- İhtiyaç: Desktop'ta backend'in aralıklı düşmesi, Durum sekmesinde sürekli `0 listener / API Yanıt Yok`, Onay sekmesinde "Yeni Tarama" sonrası içeriklerin gelmemesi
+- Kök Neden: Telegram Bot API `409 Conflict` (aynı bot token için eşzamanlı polling) backend'i düşürüyordu; ayrıca health monitor tek timeout'ta agresif restart yaparak döngü oluşturuyordu
+- Yapılan:
+  - `content_generator.py` içinde ikinci Telegram polling kaynağı kaldırıldı (duplicated polling engellendi)
+  - Worker başlangıcında Telegram Hub polling varsayılanı `TELEGRAM_HUB_ENABLED=false` yapıldı (stabilite modu)
+  - Tauri health monitor daha toleranslı hale getirildi (ardışık hata eşiği + listener/process kontrolü)
+  - Onay ekranındaki manuel tarama polling akışı stale state kullanmayacak şekilde düzeltildi
+  - Build script akışı FullBuild/Fast build ayrımı ile sürüm tutarlılığına göre güncellendi
+- Doğrulama:
+  - Foreground testte `409 Conflict` oluşunca sürecin öldüğü tekrarlandı (kök neden teyit)
+  - Hotfix sonrası `http://127.0.0.1:8765/health` yanıtı `ok` doğrulandı
+  - `backend_stderr.log` içinde `Telegram Hub polling disabled` satırı görüldü
+- Risk/Açık Konu:
+  - Telegram Hub kapalıyken Telegram üzerinden onay/bildirim/kanal yayın özellikleri devre dışı kalır
+  - Kullanıcı Telegram otomasyonunu tekrar açmak isterse token tarafında tek-poller garantisi gerekir
+- Sonraki Adım:
+  - Telegram Hub için kalıcı "single owner"/lock mekanizması eklenip `TELEGRAM_HUB_ENABLED=true` modunda güvenli çalıştırma
