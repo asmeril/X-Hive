@@ -52,6 +52,7 @@ class ContentGenerator:
     async def stop(self) -> None:
         """Stop content generator"""
         # telegram_bot is None — no stop needed
+        if self.task_queue:
             await self.task_queue.stop()
         
         logger.info("🛑 ContentGenerator stopped")
