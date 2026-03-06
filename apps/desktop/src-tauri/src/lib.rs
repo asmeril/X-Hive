@@ -319,6 +319,14 @@ fn shutdown_backend_processes() -> Result<String, String> {
     Ok("backend processes cleaned".to_string())
 }
 
+/// Backend'i öldürüp yeniden başlat. Frontend'den Tauri invoke ile çağrılır.
+#[tauri::command]
+fn restart_backend_process() -> String {
+    // start_backend() zaten cleanup + health-check + spawn yapar
+    start_backend();
+    r#"{"ok":true,"message":"Backend yeniden başlatılıyor... Birkaç saniye bekleyin."}"#.to_string()
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -495,6 +503,7 @@ $r | ConvertTo-Json -Depth 4
 }
 
 /// Arka planda her 90 saniyede bir sessizce zombie Python süreçlerini temizle.
+/// Backend ölmüşse otomatik yeniden başlat.
 fn start_background_health_monitor() {
     thread::spawn(|| {
         // İlk çalıştırmayı biraz geciktir (worker başlasın)
@@ -525,6 +534,21 @@ if ($venv.Count -gt 1) {
                     .stderr(Stdio::null())
                     .status();
             }
+
+            // Backend ölmüşse otomatik yeniden başlat
+            let backend_alive = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(3))
+                .build()
+                .ok()
+                .and_then(|c| c.get("http://127.0.0.1:8765/health").send().ok())
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+
+            if !backend_alive {
+                debug_log("Health monitor: backend not responding, auto-restarting...");
+                start_backend();
+            }
+
             thread::sleep(Duration::from_secs(90));
         }
     });
@@ -545,6 +569,7 @@ pub fn run() {
             check_worker_health,
             call_worker_api,
             shutdown_backend_processes,
+            restart_backend_process,
             system_diagnose_and_fix
         ])
         .run(tauri::generate_context!())

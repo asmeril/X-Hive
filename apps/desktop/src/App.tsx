@@ -88,6 +88,25 @@ function App() {
     }
   }, []);
 
+  const [restartLoading, setRestartLoading] = useState(false);
+  const [restartMsg, setRestartMsg] = useState<string | null>(null);
+
+  const restartBackend = useCallback(async () => {
+    setRestartLoading(true);
+    setRestartMsg(null);
+    try {
+      await invoke<string>("restart_backend_process");
+      setRestartMsg("⏳ Backend başlatılıyor... 8 saniye bekleniyor.");
+      await new Promise(r => setTimeout(r, 8000));
+      await runDiagnostic();
+      setRestartMsg(null);
+    } catch (e: unknown) {
+      setRestartMsg("❌ Hata: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setRestartLoading(false);
+    }
+  }, [runDiagnostic]);
+
   // Tab değiştikçe periyodik kontrolü başlat/durdur
   useEffect(() => {
     if (activeTab === "health") {
@@ -208,22 +227,43 @@ function App() {
                       Çakışan süreçleri ve sorunları tespit eder, otomatik onarır. Her 60s otomatik çalışır.
                     </p>
                   </div>
-                  <div style={{ textAlign: "right" }}>
-                    <button
-                      onClick={runDiagnostic}
-                      disabled={diagLoading}
-                      style={{
-                        padding: "10px 22px", borderRadius: "8px", border: "none",
-                        backgroundColor: diagLoading ? "#1d4ed8" : "#3b82f6",
-                        color: "white", fontSize: "14px", fontWeight: 600,
-                        cursor: diagLoading ? "not-allowed" : "pointer",
-                        transition: "background-color 0.2s ease",
-                      }}
-                    >
-                      {diagLoading ? "⏳ Taranıyor..." : "🔍 Şimdi Tara & Onar"}
-                    </button>
+                  <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end" }}>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      {/* Backend çalışmıyorsa Başlat butonu */}
+                      {d && !d.error && (!d.api_ok || (d.python_count ?? 0) === 0) && (
+                        <button
+                          onClick={restartBackend}
+                          disabled={restartLoading}
+                          style={{
+                            padding: "10px 22px", borderRadius: "8px", border: "none",
+                            backgroundColor: restartLoading ? "#166534" : "#16a34a",
+                            color: "white", fontSize: "14px", fontWeight: 600,
+                            cursor: restartLoading ? "not-allowed" : "pointer",
+                            transition: "background-color 0.2s ease",
+                          }}
+                        >
+                          {restartLoading ? "⏳ Başlatılıyor..." : "🚀 Backend'i Başlat"}
+                        </button>
+                      )}
+                      <button
+                        onClick={runDiagnostic}
+                        disabled={diagLoading}
+                        style={{
+                          padding: "10px 22px", borderRadius: "8px", border: "none",
+                          backgroundColor: diagLoading ? "#1d4ed8" : "#3b82f6",
+                          color: "white", fontSize: "14px", fontWeight: 600,
+                          cursor: diagLoading ? "not-allowed" : "pointer",
+                          transition: "background-color 0.2s ease",
+                        }}
+                      >
+                        {diagLoading ? "⏳ Taranıyor..." : "🔍 Şimdi Tara & Onar"}
+                      </button>
+                    </div>
+                    {restartMsg && (
+                      <div style={{ fontSize: "12px", color: "#86efac" }}>{restartMsg}</div>
+                    )}
                     {diagTime && (
-                      <div style={{ marginTop: "6px", fontSize: "11px", color: "#475569" }}>
+                      <div style={{ fontSize: "11px", color: "#475569" }}>
                         Son kontrol: {diagTime} · Otomatik: 60s
                       </div>
                     )}

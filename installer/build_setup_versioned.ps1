@@ -76,7 +76,7 @@ if ($Version -ne "") {
 $tauriConfPath = Join-Path $desktopDir "src-tauri\tauri.conf.json"
 if (Test-Path $tauriConfPath) {
     $tauriConf = Get-Content $tauriConfPath -Raw
-    $tauriConf = $tauriConf -replace '"version":\s*"[^"]+"', "\"version\": \"$newVersion\""
+    $tauriConf = $tauriConf -replace '"version":\s*"[^"]+"', ('"version": "' + $newVersion + '"')
     $tauriConf | Set-Content $tauriConfPath -Encoding UTF8 -NoNewline
     Write-Host "[OK] tauri.conf.json versiyonu -> $newVersion" -ForegroundColor Green
 } else {
