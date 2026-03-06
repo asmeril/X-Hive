@@ -229,8 +229,8 @@ function App() {
                   </div>
                   <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end" }}>
                     <div style={{ display: "flex", gap: "8px" }}>
-                      {/* Backend çalışmıyorsa Başlat butonu */}
-                      {d && !d.error && (!d.api_ok || (d.python_count ?? 0) === 0) && (
+                      {/* Backend çalışmıyorsa Başlat butonu - ilk tarama beklenmez */}
+                      {!diagLoading && d?.api_ok !== true && !d?.error && (
                         <button
                           onClick={restartBackend}
                           disabled={restartLoading}
@@ -383,11 +383,11 @@ function App() {
                   </div>
                 )}
 
-                {/* Son hatalar */}
+                {/* Geçmiş hata satırları */}
                 {d && (d.recent_errors?.length ?? 0) > 0 && (
                   <div style={{
                     backgroundColor: "#1c1a10", border: "1px solid #854d0e",
-                    borderRadius: "10px", padding: "16px 20px",
+                    borderRadius: "10px", padding: "16px 20px", marginBottom: "12px",
                   }}>
                     <div style={{ fontSize: "12px", fontWeight: 700, color: "#fbbf24", marginBottom: "10px", textTransform: "uppercase" }}>
                       📋 Son Log Hataları (bilgi amaçlı)
@@ -400,6 +400,22 @@ function App() {
                         {err}
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Telegram 409 Conflict Açıklaması */}
+                {d?.recent_errors?.some(e => e.includes("Conflict")) && (
+                  <div style={{
+                    backgroundColor: "#1e1a08", border: "1px solid #713f12",
+                    borderRadius: "10px", padding: "14px 18px",
+                  }}>
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#fbbf24", marginBottom: "6px" }}>
+                      💡 Telegram 409 Çakişması Hakkında
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#fde68a", lineHeight: 1.6 }}>
+                      Başka bir X-Hive instance’ı arka planda Telegram bot’unu kullanıyor. Bu conflict, backend'i çökertebilir.<br />
+                      <strong>Yapılması gereken:</strong> &ldquo;Backend'i Başlat&rdquo; butonu ile yeniden başlatmak, mevcut zombie süreçleri temizler ve çakişmayı çözer.
+                    </div>
                   </div>
                 )}
               </>

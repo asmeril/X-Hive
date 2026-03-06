@@ -1,0 +1,195 @@
+
+> x-hive-desktop@0.1.0 tauri
+> tauri build
+
+        Info Looking up installed tauri packages to check mismatched versions...
+     Running beforeBuildCommand `npm run build`
+
+> x-hive-desktop@0.1.0 build
+> tsc && vite build
+
+[36mvite v7.3.1 [32mbuilding client environment for production...[36m[39m
+transforming...
+[32mÔ£ô[39m 38 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mindex.html                 [39m[1m[2m  0.49 kB[22m[1m[22m[2m Ôöé gzip:  0.31 kB[22m
+[2mdist/[22m[35massets/index-ZCvx-mwu.css  [39m[1m[2m  1.37 kB[22m[1m[22m[2m Ôöé gzip:  0.65 kB[22m
+[2mdist/[22m[36massets/index-YtdiiphS.js   [39m[1m[2m256.60 kB[22m[1m[22m[2m Ôöé gzip: 74.69 kB[22m
+[32mÔ£ô built in 1.48s[39m
+   Compiling x-hive-desktop v0.1.0 (D:\Projects\X-Hive\apps\desktop\src-tauri)
+    Finished `release` profile [optimized] target(s) in 1m 12s
+       Built application at: D:\Projects\X-Hive\apps\desktop\src-tauri\target\release\x-hive-desktop.exe
+        Info Patching binary "D:\\Projects\\X-Hive\\apps\\desktop\\src-tauri\\target\\release\\x-hive-desktop.exe" for type nsis
+        Info Target: x64
+     Running makensis to produce D:\Projects\X-Hive\apps\desktop\src-tauri\target\release\bundle\nsis\XHive_1.2.0_x64-setup.exe
+    Finished 1 bundle at:
+        D:\Projects\X-Hive\apps\desktop\src-tauri\target\release\bundle\nsis\XHive_1.2.0_x64-setup.exe
+
+Inno Setup 6 Command-Line Compiler
+Copyright (C) 1997-2025 Jordan Russell. All rights reserved.
+Portions Copyright (C) 2000-2025 Martijn Laan. All rights reserved.
+Portions Copyright (C) 2001-2004 Alex Yackimoff. All rights reserved.
+https://www.innosetup.com
+
+Compiler engine version: Inno Setup 6.6.1
+Non-commercial use only
+
+Preprocessing
+   Reading file: C:\Program Files (x86)\Inno Setup 6\ISPPBuiltins.iss
+Parsing [Setup] section, line 28
+Parsing [Setup] section, line 29
+Parsing [Setup] section, line 30
+Parsing [Setup] section, line 31
+Parsing [Setup] section, line 32
+Parsing [Setup] section, line 33
+Parsing [Setup] section, line 34
+Parsing [Setup] section, line 36
+Parsing [Setup] section, line 37
+Parsing [Setup] section, line 38
+Parsing [Setup] section, line 40
+Parsing [Setup] section, line 41
+Parsing [Setup] section, line 43
+Parsing [Setup] section, line 45
+Parsing [Setup] section, line 46
+Parsing [Setup] section, line 47
+Parsing [Setup] section, line 49
+Parsing [Setup] section, line 50
+Parsing [Setup] section, line 51
+Parsing [Setup] section, line 53
+Reading file (WizardImageFile)
+Reading file (WizardSmallImageFile)
+Preparing Setup program executable
+   Verification successful
+   Updating icons (Setup.e32)
+   Updating version info (Setup.e32)
+Determining language code pages
+Parsing [Languages] section, line 56
+   Reading file: C:\Program Files (x86)\Inno Setup 6\Languages\Turkish.isl
+Parsing [Languages] section, line 57
+   Reading file: C:\Program Files (x86)\Inno Setup 6\Default.isl
+   Messages in script file
+Reading default messages from Default.isl
+Parsing [Languages] section, line 56
+   Reading file: C:\Program Files (x86)\Inno Setup 6\Languages\Turkish.isl
+Parsing [Languages] section, line 57
+   Reading file: C:\Program Files (x86)\Inno Setup 6\Default.isl
+Parsing [LangOptions], [Messages], and [CustomMessages] sections
+   Messages in script file
+Reading [Code] section
+Parsing [Tasks] section, line 60
+Parsing [Dirs] section, line 64
+Parsing [Dirs] section, line 65
+Parsing [Dirs] section, line 66
+Parsing [Dirs] section, line 67
+Parsing [Dirs] section, line 68
+Parsing [Dirs] section, line 69
+Parsing [Icons] section, line 104
+Parsing [Icons] section, line 105
+Parsing [Icons] section, line 106
+Parsing [Run] section, line 110
+Parsing [Files] section, line 73
+Parsing [Files] section, line 80
+Parsing [Files] section, line 83
+Parsing [Files] section, line 84
+Parsing [Files] section, line 85
+Parsing [Files] section, line 86
+Parsing [Files] section, line 87
+Parsing [Files] section, line 88
+Parsing [Files] section, line 89
+Parsing [Files] section, line 92
+Parsing [Files] section, line 95
+Parsing [Files] section, line 98
+Parsing [Files] section, line 99
+Compiling [Code] section
+Creating setup files
+   Verification successful
+   Updating icons (Setup.exe)
+   Compressing: D:\Projects\X-Hive\installer\..\apps\desktop\src-tauri\target\release\x-hive-desktop.exe
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\ai_content_generator.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\api_server.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\approval_manager.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\chrome_pool.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\config.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\content_generator.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\health_check.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\human_behavior.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\interaction_tracker.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\lock_manager.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\metrics_collector.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\orchestrator.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\post_scheduler.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\post_scheduler_examples.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\rate_limiter.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\run.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\run_approval_bot.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\safety_logger.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\sniper_guard.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\structured_logger.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\task_queue.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\telegram_bot.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\telegram_hub.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\visibility_engine.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\x_daemon.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\app\main.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\app\__init__.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\aggregator.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\ai_processor.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\arxiv_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\base_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\cookie_loader.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\cookie_manager.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\github_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\google_trends_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\hackernews_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\huggingface_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\linkedin_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\mock_genai.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\perplexity_scraper.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\playwright_helper.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\polymarket_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\producthunt_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\reddit_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\reddit_source_backup.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\rss_news_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\rss_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\substack_scraper.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\telegram_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\twitter_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\twitter_trends_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\youtube_source.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\intel\__init__.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\approval\approval_queue.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\approval\telegram_notifier.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\approval\__init__.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\posting\auto_poster.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\posting\twitter_poster.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\posting\__init__.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\scheduling\post_scheduler.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\scheduling\__init__.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\tools\cookie_extractor.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\tools\__init__.py
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\tools\repair_start_xhive.ps1
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\requirements.txt
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\.env
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\.gitkeep
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\arxiv.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\discord.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\github.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\google_trends.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\huggingface.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\linkedin.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\medium.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\perplexity.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\producthunt.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\reddit.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\substack.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\twitter.json
+   Compressing: D:\Projects\X-Hive\installer\..\apps\worker\cookies\youtube.json
+   Compressing Setup program executable
+   Updating version info (Setup.exe)
+   Updating manifest (Setup.exe)
+
+
+Successful compile (3,875 sec). Resulting Setup program filename is:
+D:\Projects\X-Hive\installer\output\XHive_Setup_v1.2.0_20260306_235046.exe

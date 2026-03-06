@@ -37,6 +37,8 @@ const XDaemonMonitor: React.FC = () => {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [autoStartTried, setAutoStartTried] = useState(false);
   const [isForceIntelLoading, setIsForceIntelLoading] = useState(false);
+  const [restartingBackend, setRestartingBackend] = useState(false);
+  const [restartProgress, setRestartProgress] = useState(0);
   const userStoppedRef = useRef(false);
 
   const fetchStatus = async () => {
@@ -83,7 +85,27 @@ const XDaemonMonitor: React.FC = () => {
     }
   };
 
+  const restartBackendProcess = async () => {
+    setRestartingBackend(true);
+    setError(null);
+    setRestartProgress(0);
+    try {
+      await invoke("restart_backend_process");
+      for (let i = 1; i <= 8; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        setRestartProgress(Math.round((i / 8) * 100));
+      }
+      await fetchStatus();
+    } catch (e: any) {
+      setError("Backend başlatılamadı: " + (e?.message || String(e)));
+    } finally {
+      setRestartingBackend(false);
+      setRestartProgress(0);
+    }
+  };
+
   const startDaemon = async () => {
+    if (error) { await restartBackendProcess(); return; }
     try {
       userStoppedRef.current = false;
       await invoke<string>("call_worker_api", {
@@ -110,6 +132,7 @@ const XDaemonMonitor: React.FC = () => {
   };
 
   const restartDaemon = async () => {
+    if (error) { await restartBackendProcess(); return; }
     try {
       userStoppedRef.current = false;
       await invoke<string>("call_worker_api", {
@@ -216,16 +239,47 @@ const XDaemonMonitor: React.FC = () => {
           </div>
         </div>
 
-        {/* Error Message */}
-        {error && (
+        {/* Backend Kapalı / Yeniden Başlatılıyor Banner */}
+        {(error || restartingBackend) && (
           <div style={{
-            backgroundColor: "#7f1d1d",
-            border: "1px solid #ef4444",
-            padding: "16px",
-            borderRadius: "8px",
-            marginBottom: "24px"
+            backgroundColor: restartingBackend ? "#052e16" : "#1c0507",
+            border: `1px solid ${restartingBackend ? "#166534" : "#991b1b"}`,
+            padding: "20px 24px", borderRadius: "12px", marginBottom: "24px",
           }}>
-            ❌ {error}
+            {restartingBackend ? (
+              <>
+                <div style={{ fontSize: "17px", fontWeight: 700, color: "#4ade80", marginBottom: "12px" }}>
+                  ⏳ Backend başlatılıyor...
+                </div>
+                <div style={{ width: "100%", backgroundColor: "#1e3a2a", borderRadius: "4px", height: "8px" }}>
+                  <div style={{ width: `${restartProgress}%`, backgroundColor: "#10b981", height: "100%", borderRadius: "4px", transition: "width 1s ease" }} />
+                </div>
+                <div style={{ fontSize: "12px", color: "#6ee7b7", marginTop: "8px" }}>
+                  {restartProgress}% · Python worker başlatılıyor, servisler ayağa kalktıkça bu ekran güncellenecek.
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: "17px", fontWeight: 700, color: "#f87171", marginBottom: "8px" }}>
+                  🔴 Backend Yanıt Vermiyor
+                </div>
+                <div style={{ fontSize: "13px", color: "#fca5a5", marginBottom: "16px" }}>
+                  {error?.includes("error sending request") || error?.includes("Connection refused")
+                    ? "Python worker süreci çalışmıyor. Aşağıdaki butona basarak Tauri üzerinden yeniden başlatabilirsiniz."
+                    : error}
+                </div>
+                <button
+                  onClick={restartBackendProcess}
+                  style={{
+                    padding: "10px 24px", borderRadius: "8px", border: "none",
+                    backgroundColor: "#16a34a", color: "white",
+                    fontSize: "14px", fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  🚀 Backend'i Başlat
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -234,7 +288,9 @@ const XDaemonMonitor: React.FC = () => {
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
           gap: "16px",
-          marginBottom: "24px"
+          marginBottom: "24px",
+          opacity: error && !restartingBackend ? 0.45 : 1,
+          transition: "opacity 0.3s ease",
         }}>
           {/* Orchestrator Status Card */}
           <div style={{
@@ -404,8 +460,8 @@ const XDaemonMonitor: React.FC = () => {
             <div style={{ fontSize: "14px", color: "#94a3b8", marginBottom: "8px" }}>
               Görünmez Tarayıcı (Headless Chrome)
             </div>
-            <div style={{ fontSize: "24px", fontWeight: "bold", color: "#10b981" }}>
-              {loading ? "..." : (isChromeHealthy ? "Sağlıklı ✅" : "Sorunlu ❌")}
+            <div style={{ fontSize: "24px", fontWeight: "bold", color: status === null ? "#94a3b8" : isChromeHealthy ? "#10b981" : "#ef4444" }}>
+              {loading ? "..." : status === null ? "—" : (isChromeHealthy ? "Sağlıklı ✅" : "Sorunlu ❌")}
             </div>
           </div>
         </div>
@@ -423,20 +479,20 @@ const XDaemonMonitor: React.FC = () => {
           <div style={{ display: "flex", gap: "12px" }}>
             <button
               onClick={startDaemon}
-              disabled={status?.services?.x_daemon?.daemon_status === "running"}
+              disabled={!error && status?.services?.x_daemon?.daemon_status === "running"}
               style={{
                 flex: 1,
                 padding: "12px 24px",
                 borderRadius: "8px",
                 border: "none",
-                backgroundColor: status?.services?.x_daemon?.daemon_status === "running" ? "#374151" : "#10b981",
+                backgroundColor: !error && status?.services?.x_daemon?.daemon_status === "running" ? "#374151" : "#10b981",
                 color: "white",
-                cursor: status?.services?.x_daemon?.daemon_status === "running" ? "not-allowed" : "pointer",
+                cursor: !error && status?.services?.x_daemon?.daemon_status === "running" ? "not-allowed" : "pointer",
                 fontSize: "16px",
                 fontWeight: "600"
               }}
             >
-              ▶️ Başlat
+              {error ? "🚀 Backend'i Başlat" : "▶️ Başlat"}
             </button>
             <button
               onClick={stopDaemon}

@@ -116,6 +116,24 @@ class TelegramHub:
             # ── Buton callback'leri ──
             self.application.add_handler(CallbackQueryHandler(self._handle_callback))
             
+            # ── Conflict/hata yakalayıcı: 409 backend'i çökertmesin ──
+            async def _error_handler(update, context):
+                from telegram.error import Conflict as TgConflict
+                err = context.error
+                if isinstance(err, TgConflict):
+                    logger.warning("⚠️ Telegram 409 Conflict — başka bir instance çalışıyor. Polling durduruluyor.")
+                    self._running = False
+                    try:
+                        if self.application.updater.running:
+                            import asyncio as _asyncio
+                            _asyncio.create_task(self.application.updater.stop())
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"⚠️ Telegram hata: {err}")
+
+            self.application.add_error_handler(_error_handler)
+
             # Start polling
             await self.application.initialize()
             await self.application.start()
