@@ -467,7 +467,7 @@ try {
 $stderr_path = "$env:LOCALAPPDATA\XHive\worker\backend_stderr.log"
 if (Test-Path $stderr_path) {
     $last_errors = Get-Content $stderr_path -Tail 80 |
-        Select-String "Conflict|KeyError|ImportError|CRITICAL|ERROR:" |
+        Select-String "Conflict|KeyError|ImportError|IndentationError|Traceback|ERROR:" |
         Select-Object -Last 5 |
         ForEach-Object { $_.Line.Trim() }
     $r.recent_errors = @($last_errors)

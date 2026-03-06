@@ -146,14 +146,12 @@ function App() {
     d && !d.error &&
     ((d.python_count ?? 0) > 1 ||
       !d.api_ok ||
-      (d.port_listeners ?? 0) > 1 ||
-      (d.recent_errors?.length ?? 0) > 0);
+      (d.port_listeners ?? 0) > 1);
   const allGood =
     d && !d.error &&
     (d.python_count ?? 0) <= 1 &&
     d.api_ok === true &&
-    (d.port_listeners ?? 0) <= 1 &&
-    (d.recent_errors?.length ?? 0) === 0;
+    (d.port_listeners ?? 0) <= 1;
 
   const navBtn = (tab: typeof activeTab, label: string) => (
     <button
@@ -384,13 +382,13 @@ function App() {
                 )}
 
                 {/* Geçmiş hata satırları */}
-                {d && (d.recent_errors?.length ?? 0) > 0 && (
+                {d && !allGood && (d.recent_errors?.length ?? 0) > 0 && (
                   <div style={{
                     backgroundColor: "#1c1a10", border: "1px solid #854d0e",
                     borderRadius: "10px", padding: "16px 20px", marginBottom: "12px",
                   }}>
                     <div style={{ fontSize: "12px", fontWeight: 700, color: "#fbbf24", marginBottom: "10px", textTransform: "uppercase" }}>
-                      📋 Son Log Hataları (bilgi amaçlı)
+                      📋 Geçmiş Log Notları (bilgi amaçlı)
                     </div>
                     {d.recent_errors!.map((err, i) => (
                       <div key={i} style={{
@@ -404,7 +402,7 @@ function App() {
                 )}
 
                 {/* Telegram 409 Conflict Açıklaması */}
-                {d?.recent_errors?.some(e => e.includes("Conflict")) && (
+                {d && !allGood && d.recent_errors?.some(e => e.includes("Conflict")) && (
                   <div style={{
                     backgroundColor: "#1e1a08", border: "1px solid #713f12",
                     borderRadius: "10px", padding: "14px 18px",
