@@ -227,8 +227,8 @@ function App() {
                   </div>
                   <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end" }}>
                     <div style={{ display: "flex", gap: "8px" }}>
-                      {/* Backend çalışmıyorsa Başlat butonu - ilk tarama beklenmez */}
-                      {!diagLoading && d?.api_ok !== true && !d?.error && (
+                      {/* Backend çalışmıyorsa Başlat butonu - python_count=0 durumu da dahil */}
+                      {!diagLoading && (d?.api_ok !== true || (d?.python_count ?? 0) === 0) && !d?.error && (
                         <button
                           onClick={restartBackend}
                           disabled={restartLoading}

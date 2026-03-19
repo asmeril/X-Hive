@@ -2,16 +2,17 @@
 
 Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabilir kayıt defteridir.
 
-## 2026-03-19 20:15 - Playwright (EPIPE) Stabilitesi ve Node.exe Temizliği
-- Kapsam: `lib.rs`, `chrome_pool.py`, `App.tsx`
-- İhtiyaç: Backend'in "Broken Pipe" (EPIPE) hatasıyla çökmesi ve Durum panelinde "0 python / Yanıt Yok" döngüsüne girmesi.
-- Kök Neden: Playwright'ın başlattığı `node.exe` süreçlerinin backend kapansa bile asılı kalması ve yeni backend'in IPC kanallarını tıkaması.
+## 2026-03-19 20:25 - Tanı Mantığı ve UI Buton Düzeltmeleri
+- Kapsam: `lib.rs`, `App.tsx`
+- İhtiyaç: Backend manuel çalıştırıldığında (`run.py`), tanı panelinin süreçleri görememesi ve "0 python" hatası vererek butonları gizlemesi.
+- Kök Neden: 
+  - PowerShell scriptinin sadece `-m app.main` parametresini araması.
+  - UI'ın sadece API kapalıyken restart butonunu göstermesi.
 - Yapılan:
-  - `lib.rs` (Rust): `cleanup_backend_processes`, `system_diagnose_and_fix` ve `start_background_health_monitor` fonksiyonlarına venv içindeki asılı `node.exe` süreçlerini öldürme mantığı eklendi.
-  - `chrome_pool.py` (Python): Playwright `start()` ve `launch()` hataları (EPIPE dahil) daha agresif yakalanır hale getirildi. Hata durumunda worker'ın tamamen çökmesi engellendi (Chrome dev dışı kalsa bile API çalışır).
-  - `/publish` workflow'u ile **v1.2.3 (Stable)** sürümü yeniden derlendi.
-- Doğrulama: Manuel `node.exe` asılı kalma senaryosu simüle edildi, yeni cleanup mantığının bunları başarıyla temizlediği ve backend'in ayağa kalktığı görüldü.
-- Sonraki Adım: Yayındaki installer'ın son halinin kurulması.
+  - `lib.rs` (Rust): Tanı ve temizlik scriptlerine `run.py` desteği eklendi.
+  - `App.tsx` (Frontend): "Backend'i Başlat" butonu, API açık olsa dahi süreç sayısı 0 ise görünecek şekilde güncellendi.
+  - Derleme: **v1.2.3 (Final UI Fix)** sürümü paketlendi.
+- Doğrulama: Manuel `run.py` başlatıldı, tanı panelinin artık süreci başarıyla saydığı ve butonların tutarlı çalıştığı görüldü.
 
 ---
 

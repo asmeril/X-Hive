@@ -172,6 +172,7 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe' or Name='pythonw.exe'" 
     Where-Object {
         $_.CommandLine -and (
             $_.CommandLine -match '-m app\.main' -or
+            $_.CommandLine -match 'run\.py' -or
             $_.CommandLine -match 'run_approval_bot\.py' -or
             $_.CommandLine -match 'telegram_bot\.py'
         )
@@ -425,7 +426,7 @@ $r = @{
 
 # 1. Tüm app.main Python süreçleri
 $all = Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -like "python*" -and $_.CommandLine -match "-m app\.main"
+    $_.Name -like "python*" -and ($_.CommandLine -match "-m app\.main" -or $_.CommandLine -match "run\.py")
 }
 $r.python_procs = @($all | ForEach-Object {
     @{
@@ -528,13 +529,17 @@ fn start_background_health_monitor() {
             #[cfg(target_os = "windows")]
             {
                 let ps = r#"
-Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -like "python*" -and $_.CommandLine -match "-m app\.main"
-} | ForEach-Object {
-    $is_global = $_.CommandLine -notmatch "\.venv"
-            if ($is_global) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+$all = Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -like "python*" -and ($_.CommandLine -match "-m app\.main" -or $_.CommandLine -match "run\.py")
 }
-# Playwright Node processes
+
+# Kill global Python processes
+$global_procs = @($all | Where-Object { $_.CommandLine -notmatch "\.venv" })
+foreach ($proc in $global_procs) {
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+}
+
+# Kill Playwright Node processes
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
     $_.CommandLine -match "playwright" -and $_.CommandLine -match "XHive"
 } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
@@ -597,7 +602,7 @@ if ($venv.Count -gt 1) {
                             "-ExecutionPolicy",
                             "Bypass",
                             "-Command",
-                            "@(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match '-m app\\.main' }).Count",
+                            "@(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and ($_.CommandLine -match '-m app\\.main' -or $_.CommandLine -match 'run\\.py') }).Count",
                         ])
                         .creation_flags(0x08000000)
                         .output()
