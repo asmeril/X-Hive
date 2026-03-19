@@ -160,6 +160,7 @@ class Orchestrator:
         # State
         self._running = False
         self._health_check_task: Optional[asyncio.Task] = None
+        self.last_intel_collection: Optional[datetime] = None
 
         logger.info("🎯 Orchestrator initialized")
 
@@ -271,6 +272,7 @@ class Orchestrator:
         while self._running:
             try:
                 logger.info("📡 Starting periodic intel collection cycle...")
+                self.last_intel_collection = datetime.now()
                 await self.run_intel_collection_once()
                 # Wait for next cycle
                 await asyncio.sleep(self.config.intel_interval_hours * 3600)
@@ -454,9 +456,11 @@ class Orchestrator:
                 try:
                     from intel.telegram_source import TelegramChannelSource
                     tg_source = TelegramChannelSource()
-                    items = await tg_source.fetch_latest(limit=5)
+                    items = await asyncio.wait_for(tg_source.fetch_latest(limit=5), timeout=30.0)
                     all_items.extend(items)
                     logger.info(f"✅ Telegram: {len(items)} items collected")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ Telegram: Timeout 30s (atlandı)")
                 except Exception as e:
                     logger.warning(f"⚠️ Telegram intel skipped: {e}")
 
@@ -475,11 +479,15 @@ class Orchestrator:
 
                 # AI: Viral skorla → En iyi N'ini seç → TR+EN thread üret
                 try:
-                    results = await self.ai_generator.generate_viral_threads(fresh_items, top_n=3)
+                    # AI Generation timeout ekle (Gemini/OpenAI yavaş olabilir)
+                    results = await asyncio.wait_for(
+                        self.ai_generator.generate_viral_threads(fresh_items, top_n=3),
+                        timeout=120.0
+                    )
 
-                    # 🔍 Visibility Enrichment: mentions, keywords, image, sniper targets
+                    # Visibility Enrichment timeout (image generation etc)
                     try:
-                        results = await enrich_batch(results)
+                        results = await asyncio.wait_for(enrich_batch(results), timeout=60.0)
                         logger.info(f"🔍 Visibility enrichment complete for {len(results)} threads")
                     except Exception as ve:
                         logger.error(f"⚠️ Visibility enrichment failed (non-fatal): {ve}")
@@ -658,7 +666,8 @@ class Orchestrator:
                 'require_approval': self.config.require_approval
             },
             'metrics': metrics_collector.get_metrics_report(),
-            'health': health_checker.get_status_summary()
+            'health': health_checker.get_status_summary(),
+            'last_intel_collection': self.last_intel_collection.isoformat() if self.last_intel_collection else None
         }
 
 

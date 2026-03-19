@@ -2,15 +2,15 @@
 
 Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabilir kayıt defteridir.
 
-## 2026-03-19 21:00 - v1.2.5 Kararlı Sürüm (Sync & UI Fix)
-- Kapsam: `lib.rs`, `App.tsx`, `tauri.conf.json`, `chrome_pool.py`
-- İhtiyaç: Playwright (EPIPE) çökmesi, süreç temizleme sorunları ve tanı panelindeki yanlış raporlama/buton gizleme hatalarının giderilmesi.
+## 2026-03-19 21:15 - v1.2.6 Stabilizasyon ve Zaman Aşımı Güncellemesi
+- Kapsam: `orchestrator.py`, `XDaemonMonitor.tsx`, `App.tsx`, `tauri.conf.json`
+- İhtiyaç: Backend'in intel toplama veya AI üretimi sırasında süresiz takılması ve donması.
 - Yapılan:
-  - Tanı ve temizlik scriptlerine `run.py` desteği eklendi.
-  - Asılı `node.exe` süreçlerini öldürme mantığı eklendi.
-  - `App.tsx` üzerinden "Backend'i Başlat" butonu her durumda ulaşılabilir kılındı.
-  - Versiyon **v1.2.4** olarak güncellendi.
-- Doğrulama: Tüm senaryolar (manuel restart, otomatik temizlik) test edildi.
+  - **Global Timeouts:** Tüm intel kaynaklarına (özellikle Telegram) ve AI generation pipeline'ına `asyncio.wait_for` eklendi.
+  - **Heartbeat:** İzleme paneline `last_intel_collection` (Son Tarama) bilgisi eklendi.
+  - **Stale Data Fix:** API hatalarında UI'ın eski "Çalışıyor" verisini temizlemesi sağlandı.
+  - **Sequential Build:** Tauri build ve Installer paketleme sıralı hale getirilerek versiyon senkronizasyonu garanti altına alındı.
+- Doğrulama: v1.2.6 installer üretildi ve süreçler test edildi.
 
 ---
 

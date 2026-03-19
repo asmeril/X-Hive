@@ -8,6 +8,7 @@ interface SystemStatus {
       running: boolean;
       ai_enabled: boolean;
       intel_enabled: boolean;
+      last_intel_collection: string | null;
     };
     task_queue: {
       running: boolean;
@@ -208,9 +209,14 @@ const XDaemonMonitor: React.FC = () => {
           alignItems: "center",
           marginBottom: "24px"
         }}>
-          <h1 style={{ fontSize: "28px", fontWeight: "bold" }}>
-            🤖 X-Hive Sistem İzleme (Tüm Servisler)
-          </h1>
+            <h1 style={{ fontSize: "28px", fontWeight: "bold" }}>
+              🤖 X-Hive Sistem İzleme (Tüm Servisler)
+            </h1>
+            {status?.services?.orchestrator?.last_intel_collection && (
+              <div style={{ fontSize: "13px", color: "#60a5fa", fontWeight: 500 }}>
+                📡 Son Tarama: {new Date(status.services.orchestrator.last_intel_collection).toLocaleTimeString()}
+              </div>
+            )}
           <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
             <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
               <input
