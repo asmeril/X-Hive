@@ -179,6 +179,13 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe' or Name='pythonw.exe'" 
     ForEach-Object {
         try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
     }
+    
+# Playwright Node processes
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+    Where-Object { $_.CommandLine -match "playwright" -and $_.CommandLine -match "XHive" } |
+    ForEach-Object {
+        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+    }
 "#;
 
         let result = Command::new("powershell.exe")
@@ -429,7 +436,15 @@ $r.python_procs = @($all | ForEach-Object {
 })
 $r.python_count = $all.Count
 
-# 2. Global (zombie) süreçleri öldür
+# 1.5 Node (Playwright) processes
+$nodes = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
+    $_.CommandLine -match "playwright" -and $_.CommandLine -match "XHive"
+}
+foreach ($node in $nodes) {
+    Stop-Process -Id $node.ProcessId -Force -ErrorAction SilentlyContinue
+    $r.killed_pids += [int]$node.ProcessId
+    $r.fixes_applied += "Killed hanging Node (Playwright) PID $($node.ProcessId)"
+}
 $global_procs = @($all | Where-Object { $_.CommandLine -notmatch "\.venv" })
 foreach ($proc in $global_procs) {
     Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
@@ -517,8 +532,13 @@ Get-CimInstance Win32_Process | Where-Object {
     $_.Name -like "python*" -and $_.CommandLine -match "-m app\.main"
 } | ForEach-Object {
     $is_global = $_.CommandLine -notmatch "\.venv"
-    if ($is_global) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            if ($is_global) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
+# Playwright Node processes
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
+    $_.CommandLine -match "playwright" -and $_.CommandLine -match "XHive"
+} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
 # Fazla venv süreci
 $venv = @(Get-CimInstance Win32_Process | Where-Object {
     $_.Name -like "python*" -and $_.CommandLine -match "\.venv.*-m app\.main"

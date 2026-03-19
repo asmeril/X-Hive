@@ -133,13 +133,17 @@ class ChromePool:
                         )
                     except Exception as chrome_err:
                         logger.warning(f"Real Chrome not available, falling back to Chromium: {chrome_err}")
-                        self.browser = await asyncio.wait_for(
-                            self._playwright.chromium.launch(
-                                headless=self.headless,
-                                args=self.launch_args,
-                            ),
-                            timeout=20.0,
-                        )
+                        try:
+                            self.browser = await asyncio.wait_for(
+                                self._playwright.chromium.launch(
+                                    headless=self.headless,
+                                    args=self.launch_args,
+                                ),
+                                timeout=20.0,
+                            )
+                        except Exception as inner_err:
+                            logger.error(f"Chromium fallback also failed: {inner_err}")
+                            raise
 
                     # STEALTH MODE: Random User-Agent and viewport
                     user_agent = HumanBehavior.get_random_user_agent()
@@ -207,14 +211,18 @@ class ChromePool:
 
                 except Exception as e:
                     logger.error(f"Chrome initialization failed (attempt {attempt}): {e}")
+                    # Special handling for EPIPE / Broken Pipe which often means subprocess crash
+                    if "EPIPE" in str(e) or "Broken pipe" in str(e):
+                        logger.error("🛑 Playwright driver crashed (Broken Pipe). Cleaning up...")
+                    
                     await self._cleanup_on_error()
 
                     if attempt < self._max_retries:
                         await asyncio.sleep(2 ** attempt)  # Exponential backoff
                     else:
-                        raise ChromePoolError(
-                            f"Failed to initialize Chrome after {self._max_retries} attempts: {e}"
-                        )
+                        logger.critical("❌ MAX RETRIES REACHED: Chrome Pool will be UNAVAILABLE.")
+                        # We don't re-raise here to allow the worker to start even if Chrome fails
+                        return
 
     async def get_page(self) -> Page:
         """

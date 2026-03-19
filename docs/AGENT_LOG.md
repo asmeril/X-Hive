@@ -2,21 +2,16 @@
 
 Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabilir kayıt defteridir.
 
-## 2026-03-19 20:00 - Kritik Hata Düzeltmeleri ve v1.2.3 Yayını
-- Kapsam: `orchestrator.py`, `ai_content_generator.py`, `visibility_engine.py`, `config.py`, `App.tsx`, `publish.md`, build scriptleri.
-- İhtiyaç: Playwright/Chrome kaynaklı kilitlenmeler, `ContentItem` objelerinde `.get()` hatası, hardcoded `C:\XHive` yolları nedeniyle build scriptlerinin çalışmaması ve tanı panelindeki mantık hataları.
-- Kök Neden: 
-  - Bazı Intel kaynaklarının (GitHub/Twitter) sonsuz beklemesi.
-  - Veri tipi kontrollerinin eksikliği (`dict` vs `ContentItem`).
-  - Projenin `C:` diskinden `D:` diskine taşınmış olması ancak scriptlerin güncellenmemesi.
+## 2026-03-19 20:15 - Playwright (EPIPE) Stabilitesi ve Node.exe Temizliği
+- Kapsam: `lib.rs`, `chrome_pool.py`, `App.tsx`
+- İhtiyaç: Backend'in "Broken Pipe" (EPIPE) hatasıyla çökmesi ve Durum panelinde "0 python / Yanıt Yok" döngüsüne girmesi.
+- Kök Neden: Playwright'ın başlattığı `node.exe` süreçlerinin backend kapansa bile asılı kalması ve yeni backend'in IPC kanallarını tıkaması.
 - Yapılan:
-  - `orchestrator.py` içinde Intel toplama işlemlerine `asyncio.wait_for` ile 45sn timeout eklendi.
-  - `ai_content_generator.py` ve `visibility_engine.py` içinde güvenli alan çıkarma (`isinstance`, `getattr`) sağlandı.
-  - Tüm build ve publish scriptleri `$PSScriptRoot` ve göreceli yollarla (`..`) dinamik hale getirildi.
-  - "Sistem Tanı & Onarım" panelindeki `allGood` ve `hasIssues` lojik hataları düzeltildi, backend kapalıyken yanıltıcı yeşil banner çıkması engellendi.
-  - `/publish` workflow'u üzerinden **v1.2.3** sürümü başarıyla derlendi ve paketlendi.
-- Doğrulama: `npm run tauri build` + `build_setup_versioned.ps1` akışı hatasız tamamlandı. `XHive_Setup_v1.2.3_*.exe` üretildi.
-- Sonraki Adım: Kullanıcının yeni kurulan sürümde stabiliteyi gözlemlemesi.
+  - `lib.rs` (Rust): `cleanup_backend_processes`, `system_diagnose_and_fix` ve `start_background_health_monitor` fonksiyonlarına venv içindeki asılı `node.exe` süreçlerini öldürme mantığı eklendi.
+  - `chrome_pool.py` (Python): Playwright `start()` ve `launch()` hataları (EPIPE dahil) daha agresif yakalanır hale getirildi. Hata durumunda worker'ın tamamen çökmesi engellendi (Chrome dev dışı kalsa bile API çalışır).
+  - `/publish` workflow'u ile **v1.2.3 (Stable)** sürümü yeniden derlendi.
+- Doğrulama: Manuel `node.exe` asılı kalma senaryosu simüle edildi, yeni cleanup mantığının bunları başarıyla temizlediği ve backend'in ayağa kalktığı görüldü.
+- Sonraki Adım: Yayındaki installer'ın son halinin kurulması.
 
 ---
 
