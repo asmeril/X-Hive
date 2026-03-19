@@ -2,17 +2,15 @@
 
 Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabilir kayıt defteridir.
 
-## 2026-03-19 20:25 - Tanı Mantığı ve UI Buton Düzeltmeleri
-- Kapsam: `lib.rs`, `App.tsx`
-- İhtiyaç: Backend manuel çalıştırıldığında (`run.py`), tanı panelinin süreçleri görememesi ve "0 python" hatası vererek butonları gizlemesi.
-- Kök Neden: 
-  - PowerShell scriptinin sadece `-m app.main` parametresini araması.
-  - UI'ın sadece API kapalıyken restart butonunu göstermesi.
+## 2026-03-19 20:25 - v1.2.4 Kararlı Sürüm (Final UI & Stabilite)
+- Kapsam: `lib.rs`, `App.tsx`, `tauri.conf.json`, `chrome_pool.py`
+- İhtiyaç: Playwright (EPIPE) çökmesi, süreç temizleme sorunları ve tanı panelindeki yanlış raporlama/buton gizleme hatalarının giderilmesi.
 - Yapılan:
-  - `lib.rs` (Rust): Tanı ve temizlik scriptlerine `run.py` desteği eklendi.
-  - `App.tsx` (Frontend): "Backend'i Başlat" butonu, API açık olsa dahi süreç sayısı 0 ise görünecek şekilde güncellendi.
-  - Derleme: **v1.2.3 (Final UI Fix)** sürümü paketlendi.
-- Doğrulama: Manuel `run.py` başlatıldı, tanı panelinin artık süreci başarıyla saydığı ve butonların tutarlı çalıştığı görüldü.
+  - Tanı ve temizlik scriptlerine `run.py` desteği eklendi.
+  - Asılı `node.exe` süreçlerini öldürme mantığı eklendi.
+  - `App.tsx` üzerinden "Backend'i Başlat" butonu her durumda ulaşılabilir kılındı.
+  - Versiyon **v1.2.4** olarak güncellendi.
+- Doğrulama: Tüm senaryolar (manuel restart, otomatik temizlik) test edildi.
 
 ---
 
