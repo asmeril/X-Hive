@@ -53,12 +53,12 @@ const XDaemonMonitor: React.FC = () => {
 
       if (parsed.status === "ok") {
         setStatus(parsed);
+        setError(null);
       } else {
         // Fallback or error state
+        setStatus(null);
         setError("API yanitinda hata: " + parsed.message);
       }
-      
-      setError(null);
 
       if (!parsed.services?.x_daemon?.daemon_status || parsed.services.x_daemon.daemon_status !== "running") {
         if (!autoStartTried && !userStoppedRef.current) {
@@ -79,6 +79,7 @@ const XDaemonMonitor: React.FC = () => {
     } catch (e: any) {
       console.error("Status fetch error:", e);
       const errorMsg = typeof e === "string" ? e : e?.message || JSON.stringify(e);
+      setStatus(null);
       setError(errorMsg);
     } finally {
       setLoading(false);

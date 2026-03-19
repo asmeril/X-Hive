@@ -10,6 +10,16 @@ description: Build and publish setup for XHive with versioned Inno compile
 2. Installer değişikliği varsa `installer/xhive_setup.iss` notu işlendi mi?
 3. Çalışan backend süreçleri temiz mi?
 
+## 0.5) Otomatik Versiyon Artır
+```powershell
+# Versiyonu otomatik artır ve tauri.conf.json / package.json / AGENT_LOG.md günceller.
+if (Test-Path "$PSScriptRoot/../../bump-version.ps1") {
+    & "$PSScriptRoot/../../bump-version.ps1"
+} elseif (Test-Path "bump-version.ps1") {
+    & "./bump-version.ps1"
+}
+```
+
 ## 1) Zorunlu Tauri Release Build
 ```powershell
 # Set-Location to apps/desktop regardless of where the repo is
