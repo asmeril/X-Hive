@@ -438,8 +438,10 @@ class TaskQueue:
         if self.chrome_pool and not self.chrome_pool.browser:
             logger.info("🌐 Starting ChromePool browser...")
             try:
-                await self.chrome_pool.initialize()
+                await asyncio.wait_for(self.chrome_pool.initialize(), timeout=30.0)
                 logger.info("✅ ChromePool browser started")
+            except asyncio.TimeoutError:
+                logger.warning("⚠️ ChromePool init timed out (30s) — tasks will fail gracefully")
             except Exception as e:
                 logger.warning(
                     f"⚠️ ChromePool unavailable in TaskQueue: {e}\n"

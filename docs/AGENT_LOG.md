@@ -4,6 +4,20 @@ Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabi
 
 ---
 
+## 2026-03-19 18:00 - Chrome Init Hang ve ContentItem Get Hatası Düzeltmeleri
+- Kapsam: `apps/worker/app/main.py`, `apps/worker/chrome_pool.py`, `apps/worker/task_queue.py`, `apps/worker/orchestrator.py`
+- İhtiyaç: Backend'in ayağa kalkamaması (Tauri'nin sürekli restart atması) ve AI fallback işlemlerinde AttributeError alınması.
+- Kök Neden: 
+  - `chrome_pool.initialize()`'ın FastAPI `lifespan` içerisinde timeout olmadan çağrılması ve Chromium takıldığında tüm uygulamanın kilitlenmesi.
+  - Eski `ContentItem` nesnesi üzerinde doğrudan `.get()` çağrılmaya çalışıldığında oluşan hatanın trace bırakmadan yutulup tekrar etmesi.
+- Yapılan:
+  - `chrome_pool.py` içindeki Playwright başlatma (`chromium.launch`) denemelerine 20sn timeout eklendi.
+  - `app/main.py` ve `task_queue.py` içindeki Chrome Pool ayağa kaldırma adımlarına 30sn'lik genel timeout sınırı konularak Chrome çökse bile API'nin `200 OK` çalışmaya devam etmesi sağlandı.
+  - `orchestrator.py` fallback (basit tweet atma) yolundaki hata yakalama güncellendi. İstisna loglarına `exc_info=True` parametresi ve daha güvenli veri okuma (`getattr`/`.get`) mekanizması eklendi.
+- Doğrulama: `uvicorn` ile FastAPI doğrudan başlatılıp `http://127.0.0.1:8765/health` kontrol edildi ve timeout devreye girerek başarılı sonuç alındı.
+- Risk/Açık Konu: Chrome tamamen bozuksa Twitter login/paylaşım işlemleri hata verebilir; ancak uygulamanın geneli çalışmaya devam edecektir.
+- Sonraki Adım: Tauri derleme ve versiyonlu setup çıktısının yayımlanması.
+
 ## 2026-03-05 00:00 - Build Öncesi Stabilizasyon ve Installer Güçlendirme
 - Kapsam: `apps/worker/ai_content_generator.py`, `apps/worker/telegram_hub.py`, `apps/desktop/src-tauri/src/lib.rs`, `apps/desktop/src/main.tsx`, `installer/xhive_setup.iss`, build scriptleri
 - İhtiyaç: Özelliklerin görünmemesi/çalışmaması, backend erişim problemi, installer uninstall ve sürüm akışında tutarsızlıklar
@@ -86,7 +100,7 @@ Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabi
 ## 2026-03-05 01:45 - /publish Düzeltme Koşusu (2+ dk Tauri bekleme ile) Tamamlandı
 - Kapsam: `.agent/workflows/publish.md`, `apps/desktop/src-tauri/target/release/x-hive-desktop.exe`, `installer/version.txt`, `installer/output`
 - İhtiyaç: Tauri build sonrası en az 2 dakika bekleme şartını uygulayarak publish'i doğru şekilde tamamlamak
-- Kök Neden: Hızlı geri dönüşte Tauri derleme süreçleri (`cargo/rustc`) hâlâ çalışırken setup derlemeye geçilmişti
+- Kök Neden: Hızlı geri dönüşte Tauri generational processes (`cargo/rustc`) hâlâ çalışırken setup derlemeye geçilmişti
 - Yapılan:
   - Publish workflow'a `1.1` adımı olarak zorunlu `Start-Sleep -Seconds 120` + süreç kontrolü eklendi
   - Tauri build yeniden çalıştırıldı ve süreçler tamamen bitene kadar beklendi (`PROC=NONE` doğrulandı)

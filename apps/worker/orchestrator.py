@@ -516,16 +516,17 @@ class Orchestrator:
                             await tg.notify_threads_ready(count=len(results), top_score=top_score)
                     except Exception as tg_err:
                         logger.debug(f"Telegram notification skipped: {tg_err}")
-                except Exception as e:
-                    logger.error(f"❌ Viral pipeline failed, falling back to simple tweets: {e}")
+                except Exception as eval_err:
+                    logger.error(f"❌ Viral pipeline failed, falling back to simple tweets: {eval_err}", exc_info=True)
                     # Fallback: eski tek-tweet yöntemi (ilk 10 fresh item)
                     fallback_items = fresh_items[:10]
                     for item in fallback_items:
                         try:
                             tweet = await self.ai_generator.generate_tweet_from_content(item)
                             approval_queue.add(content_item=item, generated_tweet=tweet)
-                        except Exception as e2:
-                            logger.error(f"❌ Fallback tweet generation failed: {e2}")
+                        except Exception as gen_err:
+                            title = getattr(item, 'title', 'Unknown Title') if not isinstance(item, dict) else item.get('title', 'Unknown Title')
+                            logger.error(f"❌ Fallback tweet generation failed for '{title[:50]}': {gen_err}", exc_info=True)
                     self._mark_urls_seen([i.url for i in fallback_items])
 
             logger.info(f"✅ Intel collection pass complete. {len(all_items)} items collected, fresh={len(fresh_items) if 'fresh_items' in dir() else len(all_items)}.")

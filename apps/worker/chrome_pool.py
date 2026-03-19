@@ -111,18 +111,34 @@ class ChromePool:
 
                     # Launch browser — prefer real Chrome for anti-detection
                     # channel="chrome" uses installed Chrome instead of Playwright's Chromium
+                    # Each launch has a 20s timeout to prevent indefinite hangs
                     try:
-                        self.browser = await self._playwright.chromium.launch(
-                            headless=self.headless,
-                            channel="chrome",
-                            args=self.launch_args,
+                        self.browser = await asyncio.wait_for(
+                            self._playwright.chromium.launch(
+                                headless=self.headless,
+                                channel="chrome",
+                                args=self.launch_args,
+                            ),
+                            timeout=20.0,
                         )
                         logger.info("✅ Using real Chrome browser (better anti-detection)")
+                    except asyncio.TimeoutError:
+                        logger.warning("Real Chrome launch timed out (20s), falling back to Chromium")
+                        self.browser = await asyncio.wait_for(
+                            self._playwright.chromium.launch(
+                                headless=self.headless,
+                                args=self.launch_args,
+                            ),
+                            timeout=20.0,
+                        )
                     except Exception as chrome_err:
                         logger.warning(f"Real Chrome not available, falling back to Chromium: {chrome_err}")
-                        self.browser = await self._playwright.chromium.launch(
-                            headless=self.headless,
-                            args=self.launch_args,
+                        self.browser = await asyncio.wait_for(
+                            self._playwright.chromium.launch(
+                                headless=self.headless,
+                                args=self.launch_args,
+                            ),
+                            timeout=20.0,
                         )
 
                     # STEALTH MODE: Random User-Agent and viewport
