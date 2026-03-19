@@ -12,7 +12,10 @@ description: Build and publish setup for XHive with versioned Inno compile
 
 ## 1) Zorunlu Tauri Release Build
 ```powershell
-Set-Location "C:\XHive\X-Hive\apps\desktop"
+# Set-Location to apps/desktop regardless of where the repo is
+Set-Location "$PSScriptRoot/../apps/desktop" -ErrorAction SilentlyContinue
+# Fallback for manual run
+if ($LASTEXITCODE -ne 0) { Set-Location "apps/desktop" }
 npm run tauri build
 ```
 
@@ -32,7 +35,9 @@ Not:
 
 ## 2) Versioned Setup Build (Önerilen Tek Komut)
 ```powershell
-Set-Location "C:\XHive\X-Hive\installer"
+Set-Location "../../installer" -ErrorAction SilentlyContinue
+# Fallback
+if ($LASTEXITCODE -ne 0) { Set-Location "installer" }
 .\build_setup_versioned.ps1
 ```
 
@@ -43,7 +48,7 @@ Bu akış:
 
 ## 3) Çıktı Doğrulama
 ```powershell
-Get-ChildItem "C:\XHive\X-Hive\installer\output" | Sort-Object LastWriteTime -Descending | Select-Object -First 5 Name,LastWriteTime,Length
+Get-ChildItem "output" | Sort-Object LastWriteTime -Descending | Select-Object -First 5 Name,LastWriteTime,Length
 ```
 
 - `XHive_Setup_v*.exe` çıktısının yeni timestamp ile üretildiğini doğrula.
@@ -60,7 +65,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8765/health" -UseBasicParsing
 
 ## 6) GitHub İşlemleri (Zorunlu)
 ```powershell
-Set-Location "C:\XHive\X-Hive"
+# Set-Location back to repo root
+Set-Location ".." -ErrorAction SilentlyContinue
 git status
 git add .
 git commit -m "release: publish workflow run and setup output update"

@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $appName = 'XHive'
-$installerDir = 'C:\XHive\X-Hive\installer\output'
+$installerDir = Join-Path $PSScriptRoot "output"
 
 function Get-LatestSetupPath {
     param([string]$dir)

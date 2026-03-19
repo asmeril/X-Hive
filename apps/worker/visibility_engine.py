@@ -557,14 +557,16 @@ async def enrich_content_visibility(content_item, summary: str = "") -> Dict[str
         Dict with visibility enrichment data
     """
     # Field extraction
-    if hasattr(content_item, 'title'):
-        title = content_item.title or ""
-        url = content_item.url or ""
-        desc = content_item.ai_summary or getattr(content_item, 'description', '') or ""
-    else:
+    if isinstance(content_item, dict):
         title = content_item.get("title", "")
         url = content_item.get("url", "")
         desc = content_item.get("ai_summary", content_item.get("summary", content_item.get("description", "")))
+    else:
+        # Assume ContentItem or similar object
+        title = getattr(content_item, 'title', "") or ""
+        url = getattr(content_item, 'url', "") or ""
+        desc = (getattr(content_item, 'ai_summary', "") or 
+                getattr(content_item, 'description', "") or "")
     
     full_summary = f"{desc} {summary}".strip()
     

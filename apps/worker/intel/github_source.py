@@ -126,12 +126,14 @@ class GitHubTrendingSource(BaseContentSource):
         full_url = f"{url}?{query_string}"
         
         try:
+            logger.info(f"📡 Fetching GitHub Trending for {language or 'all'}...")
             async with aiohttp.ClientSession() as session:
                 async with session.get(full_url, timeout=10) as response:
                     if response.status != 200:
                         raise ContentSourceError(f"GitHub returned status {response.status}")
                     
                     html = await response.text()
+            logger.info(f"✅ Received response from GitHub ({len(html)} bytes)")
             
             # Parse HTML
             soup = BeautifulSoup(html, 'html.parser')

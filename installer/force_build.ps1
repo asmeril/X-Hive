@@ -1,8 +1,8 @@
 Write-Host "Inno Setup baslatiliyor..." -ForegroundColor Cyan
 
 $InnoSetup = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-$Script = "C:\XHive\X-Hive\installer\xhive_setup.iss"
-$VersionFile = "C:\XHive\X-Hive\installer\version.txt"
+$Script = Join-Path $PSScriptRoot "xhive_setup.iss"
+$VersionFile = Join-Path $PSScriptRoot "version.txt"
 
 if (-Not (Test-Path $InnoSetup)) {
     Write-Host "HATA: Inno Setup 6 bulunamadi!" -ForegroundColor Red

@@ -1,7 +1,7 @@
 # X-HIVE Backend Starter Script
 # This script starts the Python backend in a hidden window
 
-$WorkerPath = "C:\XHive\X-Hive\apps\worker"
+$WorkerPath = Join-Path $PSScriptRoot "..\worker"
 $PythonCmd = "python -m app.main"
 
 Write-Host "🚀 Starting X-HIVE Backend..." -ForegroundColor Green

@@ -327,7 +327,7 @@ class Orchestrator:
             if "github" in self.config.intel_sources:
                 try:
                     github = GitHubTrendingSource(language="python", max_repos=3)
-                    items = await github.fetch_latest()
+                    items = await asyncio.wait_for(github.fetch_latest(), timeout=30.0)
                     all_items.extend(items)
                     logger.info(f"✅ GitHub: {len(items)} items collected")
                 except Exception as e:
@@ -336,7 +336,7 @@ class Orchestrator:
             if "google_trends" in self.config.intel_sources:
                 try:
                     trends = GoogleTrendsSource()
-                    items = await trends.fetch_latest()
+                    items = await asyncio.wait_for(trends.fetch_latest(), timeout=30.0)
                     items = items[:3]
                     all_items.extend(items)
                     logger.info(f"✅ Google Trends: {len(items)} items collected")
@@ -346,7 +346,7 @@ class Orchestrator:
             if "hackernews" in self.config.intel_sources:
                 try:
                     hn = HackerNewsSource(limit=3)
-                    items = await hn.fetch_latest()
+                    items = await asyncio.wait_for(hn.fetch_latest(), timeout=20.0)
                     all_items.extend(items)
                     logger.info(f"✅ HackerNews: {len(items)} items collected")
                 except Exception as e:
@@ -376,7 +376,7 @@ class Orchestrator:
 
             if "twitter" in self.config.intel_sources:
                 try:
-                    ts = TwitterSource(limit=3)
+                    ts = TwitterSource(tweets_per_influencer=3)
                     items = await asyncio.wait_for(ts.fetch_latest(), timeout=15.0)
                     all_items.extend(items)
                     logger.info(f"✅ Twitter: {len(items)} items collected")
@@ -525,7 +525,7 @@ class Orchestrator:
                             tweet = await self.ai_generator.generate_tweet_from_content(item)
                             approval_queue.add(content_item=item, generated_tweet=tweet)
                         except Exception as gen_err:
-                            title = getattr(item, 'title', 'Unknown Title') if not isinstance(item, dict) else item.get('title', 'Unknown Title')
+                            title = item.title if hasattr(item, 'title') else item.get('title', 'Unknown Title')
                             logger.error(f"❌ Fallback tweet generation failed for '{title[:50]}': {gen_err}", exc_info=True)
                     self._mark_urls_seen([i.url for i in fallback_items])
 

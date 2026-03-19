@@ -2,6 +2,22 @@
 
 Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabilir kayıt defteridir.
 
+## 2026-03-19 20:00 - Kritik Hata Düzeltmeleri ve v1.2.3 Yayını
+- Kapsam: `orchestrator.py`, `ai_content_generator.py`, `visibility_engine.py`, `config.py`, `App.tsx`, `publish.md`, build scriptleri.
+- İhtiyaç: Playwright/Chrome kaynaklı kilitlenmeler, `ContentItem` objelerinde `.get()` hatası, hardcoded `C:\XHive` yolları nedeniyle build scriptlerinin çalışmaması ve tanı panelindeki mantık hataları.
+- Kök Neden: 
+  - Bazı Intel kaynaklarının (GitHub/Twitter) sonsuz beklemesi.
+  - Veri tipi kontrollerinin eksikliği (`dict` vs `ContentItem`).
+  - Projenin `C:` diskinden `D:` diskine taşınmış olması ancak scriptlerin güncellenmemesi.
+- Yapılan:
+  - `orchestrator.py` içinde Intel toplama işlemlerine `asyncio.wait_for` ile 45sn timeout eklendi.
+  - `ai_content_generator.py` ve `visibility_engine.py` içinde güvenli alan çıkarma (`isinstance`, `getattr`) sağlandı.
+  - Tüm build ve publish scriptleri `$PSScriptRoot` ve göreceli yollarla (`..`) dinamik hale getirildi.
+  - "Sistem Tanı & Onarım" panelindeki `allGood` ve `hasIssues` lojik hataları düzeltildi, backend kapalıyken yanıltıcı yeşil banner çıkması engellendi.
+  - `/publish` workflow'u üzerinden **v1.2.3** sürümü başarıyla derlendi ve paketlendi.
+- Doğrulama: `npm run tauri build` + `build_setup_versioned.ps1` akışı hatasız tamamlandı. `XHive_Setup_v1.2.3_*.exe` üretildi.
+- Sonraki Adım: Kullanıcının yeni kurulan sürümde stabiliteyi gözlemlemesi.
+
 ---
 
 ## 2026-03-19 18:00 - Chrome Init Hang ve ContentItem Get Hatası Düzeltmeleri

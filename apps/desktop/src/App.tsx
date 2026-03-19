@@ -144,14 +144,14 @@ function App() {
   const d = diagResult;
   const hasIssues =
     d && !d.error &&
-    ((d.python_count ?? 0) > 1 ||
+    ((d.python_count ?? 0) !== 1 ||
       !d.api_ok ||
       (d.port_listeners ?? 0) > 1);
   const allGood =
     d && !d.error &&
-    (d.python_count ?? 0) <= 1 &&
+    (d.python_count ?? 0) === 1 &&
     d.api_ok === true &&
-    (d.port_listeners ?? 0) <= 1;
+    (d.port_listeners ?? 0) === 1;
 
   const navBtn = (tab: typeof activeTab, label: string) => (
     <button
@@ -279,9 +279,11 @@ function App() {
                   }}>
                     {allGood
                       ? "✅ Her şey normal. Çalışan süreç sayısı uygun, API yanıt veriyor."
-                      : (d.killed_pids?.length ?? 0) > 0
-                        ? `🔧 ${d.killed_pids!.length} sorunlu süreç sonlandırıldı. Durum iyileştirildi.`
-                        : "⚠️ Bazı sorunlar tespit edildi."}
+                      : (d.python_count ?? 0) === 0
+                        ? "🔴 Backend çalışmıyor. 'Backend'i Başlat' butonuna basın."
+                        : (d.killed_pids?.length ?? 0) > 0
+                          ? `🔧 ${d.killed_pids!.length} sorunlu süreç sonlandırıldı. Durum iyileştirildi.`
+                          : "⚠️ Bazı sorunlar tespit edildi."}
                   </div>
                 )}
 
@@ -303,7 +305,7 @@ function App() {
                       icon="🐍" label="Python Süreçleri"
                       value={`${d.python_count ?? "?"} adet`}
                       ok={(d.python_count ?? 0) === 1}
-                      note={(d.python_count ?? 0) > 1 ? "Fazla süreç tespit edildi" : (d.python_count ?? 0) === 0 ? "Backend çalışmıyor!" : "Normal"}
+                      note={(d.python_count ?? 0) > 1 ? "⚠️ Fazla süreç tespit edildi" : (d.python_count ?? 0) === 0 ? "🔴 Backend çalışmıyor!" : "✅ Normal"}
                     />
                     <StatusCard
                       icon="🌐" label="API Durumu"
@@ -315,7 +317,7 @@ function App() {
                       icon="🔌" label="Port 8765"
                       value={`${d.port_listeners ?? "?"} listener`}
                       ok={(d.port_listeners ?? 0) === 1}
-                      note={(d.port_listeners ?? 0) > 1 ? "Port çakışması!" : (d.port_listeners ?? 0) === 0 ? "Dinlenmiyor" : "Normal"}
+                      note={(d.port_listeners ?? 0) > 1 ? "⚠️ Port çakışması!" : (d.port_listeners ?? 0) === 0 ? "Dinlenmiyor" : "✅ Normal"}
                     />
                     <StatusCard
                       icon="🎯" label="Orchestrator"

@@ -362,20 +362,23 @@ Sadece cevabı yaz, ek açıklama yapma.
         
     def _extract_content_fields(self, content_item) -> dict:
         """Extract fields from ContentItem dataclass or dict."""
-        if hasattr(content_item, 'title'):
+        if isinstance(content_item, dict):
             return {
-                "title": content_item.title or "",
-                "url": content_item.url or "",
-                "source": content_item.source_name or "Kaynak",
-                "summary": content_item.ai_summary or content_item.description or "",
-                "category": getattr(content_item, 'category', '') or "",
+                "title": content_item.get("title", ""),
+                "url": content_item.get("url", ""),
+                "source": content_item.get("source_name", content_item.get("source", "Kaynak")),
+                "summary": content_item.get("ai_summary", content_item.get("summary", content_item.get("description", ""))),
+                "category": content_item.get("category", ""),
             }
+        
+        # Assume ContentItem dataclass or similar object
         return {
-            "title": content_item.get("title", ""),
-            "url": content_item.get("url", ""),
-            "source": content_item.get("source_name", content_item.get("source", "Kaynak")),
-            "summary": content_item.get("ai_summary", content_item.get("summary", content_item.get("description", ""))),
-            "category": content_item.get("category", ""),
+            "title": getattr(content_item, 'title', "") or "",
+            "url": getattr(content_item, 'url', "") or "",
+            "source": getattr(content_item, 'source_name', "Kaynak") or "Kaynak",
+            "summary": (getattr(content_item, 'ai_summary', "") or 
+                       getattr(content_item, 'description', "") or ""),
+            "category": getattr(content_item, 'category', "") or "",
         }
 
     async def generate_tweet_from_content(self, content_item) -> str:

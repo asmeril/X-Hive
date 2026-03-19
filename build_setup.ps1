@@ -6,9 +6,9 @@ if (-Not (Test-Path $ISCC_Path)) {
     Exit
 }
 
-$Iss_File = "C:\XHive\X-Hive\installer\xhive_setup.iss"
-$Output_Dir = "C:\XHive\X-Hive\installer\output"
-$Version_File = "C:\XHive\X-Hive\installer\version.txt"
+$Iss_File = Join-Path $PSScriptRoot "installer\xhive_setup.iss"
+$Output_Dir = Join-Path $PSScriptRoot "installer\output"
+$Version_File = Join-Path $PSScriptRoot "installer\version.txt"
 
 if (-Not (Test-Path $Version_File)) {
     Write-Host "[HATA] version.txt bulunamadi: $Version_File" -ForegroundColor Red
