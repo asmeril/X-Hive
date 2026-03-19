@@ -42,6 +42,7 @@ from intel.linkedin_source import LinkedInSource
 
 # Visibility & Distribution Engine
 from visibility_engine import enrich_batch
+from intel.base_source import ContentItem, ContentCategory
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,15 @@ class Orchestrator:
         self._seen_url_ttl_days = 14  # 14 günden eski kayıtları otomatik temizle
         logger.info(f"📌 Seen-URL store: {len(self._seen_urls)} URLs tracked")
 
+        # ─── Persistent intel memory (raw journal + urgent watchlist) ────────
+        self._intel_raw_journal_file = Path("data/intel_raw_journal.jsonl")
+        self._intel_raw_journal_file.parent.mkdir(parents=True, exist_ok=True)
+        self._watchlist_file = Path("data/urgent_watchlist.json")
+        self._watchlist_file.parent.mkdir(parents=True, exist_ok=True)
+        self._watchlist_ttl_hours = 72
+        self._urgent_watchlist: Dict[str, Dict[str, Any]] = self._load_watchlist()
+        logger.info(f"📌 Urgent watchlist loaded: {len(self._urgent_watchlist)} URLs")
+
         # Initialize components
         self.chrome_pool = ChromePool()
         self.task_queue = TaskQueue()
@@ -161,6 +171,7 @@ class Orchestrator:
         self._running = False
         self._health_check_task: Optional[asyncio.Task] = None
         self.last_intel_collection: Optional[datetime] = None
+        self._intel_run_lock = asyncio.Lock()
 
         logger.info("🎯 Orchestrator initialized")
 
@@ -321,7 +332,213 @@ class Orchestrator:
             logger.info(f"🔁 {skipped} item zaten işlenmiş (seen-URL), atlandı")
         return fresh
 
+    def _compute_urgency_score(self, item) -> float:
+        """Time-sensitive öncelik skoru (0-10)."""
+        title = (getattr(item, "title", "") or "").lower()
+        source = (getattr(item, "source_name", "") or "").lower()
+        source_type = (getattr(item, "source_type", "") or "").lower()
+        relevance = float(getattr(item, "relevance_score", 0.0) or 0.0)
+        engagement = float(getattr(item, "engagement_score", 0.0) or 0.0)
+
+        score = relevance * 4.0 + engagement * 3.0
+
+        hot_terms = [
+            "breaking", "urgent", "hack", "breach", "ban", "lawsuit", "leak",
+            "launch", "release", "acquire", "funding", "openai", "google", "meta",
+            "nvidia", "bitcoin", "ethereum", "regulation", "security"
+        ]
+        if any(term in title for term in hot_terms):
+            score += 1.8
+
+        # Newsy/fast streams deserve slight priority boost.
+        if source_type in {"telegram", "reddit", "hackernews", "google_trends"}:
+            score += 0.6
+
+        if any(ch.isdigit() for ch in title):
+            score += 0.4
+
+        published_at = getattr(item, "published_at", None)
+        if isinstance(published_at, datetime):
+            dt = published_at if published_at.tzinfo else published_at.replace(tzinfo=timezone.utc)
+            age_hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600.0
+            if age_hours <= 2:
+                score += 1.2
+            elif age_hours <= 8:
+                score += 0.6
+
+        if "telegram" in source or "trend" in source:
+            score += 0.3
+
+        return max(0.0, min(10.0, score))
+
+    def _item_to_journal_record(self, item) -> Dict[str, Any]:
+        category_raw = getattr(item, "category", None)
+        if hasattr(category_raw, "value"):
+            category_raw = category_raw.value
+
+        published_at = getattr(item, "published_at", None)
+        published_iso = published_at.isoformat() if isinstance(published_at, datetime) else None
+
+        return {
+            "collected_at": datetime.now(timezone.utc).isoformat(),
+            "title": getattr(item, "title", "") or "",
+            "url": getattr(item, "url", "") or "",
+            "source_type": getattr(item, "source_type", "") or "",
+            "source_name": getattr(item, "source_name", "") or "",
+            "description": getattr(item, "description", "") or "",
+            "ai_summary": getattr(item, "ai_summary", "") or "",
+            "category": category_raw or "",
+            "published_at": published_iso,
+            "relevance_score": float(getattr(item, "relevance_score", 0.0) or 0.0),
+            "engagement_score": float(getattr(item, "engagement_score", 0.0) or 0.0),
+            "urgency_score": self._compute_urgency_score(item),
+        }
+
+    def _append_raw_journal(self, items: list) -> None:
+        if not items:
+            return
+        try:
+            with self._intel_raw_journal_file.open("a", encoding="utf-8") as f:
+                for item in items:
+                    rec = self._item_to_journal_record(item)
+                    if rec["url"]:
+                        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.error(f"❌ intel_raw_journal write failed: {e}")
+
+    def _load_watchlist(self) -> Dict[str, Dict[str, Any]]:
+        try:
+            if self._watchlist_file.exists():
+                data = json.loads(self._watchlist_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+        except Exception as e:
+            logger.warning(f"⚠️ urgent_watchlist.json okunamadı, temiz başlanıyor: {e}")
+        return {}
+
+    def _save_watchlist(self) -> None:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=self._watchlist_ttl_hours)
+        pruned: Dict[str, Dict[str, Any]] = {}
+
+        for url, rec in self._urgent_watchlist.items():
+            if url in self._seen_urls:
+                continue
+            last_seen_raw = rec.get("last_seen")
+            try:
+                last_seen = datetime.fromisoformat(last_seen_raw) if last_seen_raw else cutoff
+                if last_seen.tzinfo is None:
+                    last_seen = last_seen.replace(tzinfo=timezone.utc)
+            except Exception:
+                last_seen = cutoff
+            if last_seen >= cutoff:
+                pruned[url] = rec
+
+        self._urgent_watchlist = pruned
+        try:
+            self._watchlist_file.write_text(
+                json.dumps(self._urgent_watchlist, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.error(f"❌ urgent_watchlist save failed: {e}")
+
+    def _update_urgent_watchlist(self, items: list, min_score: float = 6.5) -> None:
+        if not items:
+            return
+
+        now = datetime.now(timezone.utc).isoformat()
+        changed = 0
+        for item in items:
+            url = getattr(item, "url", "") or ""
+            if not url or url in self._seen_urls:
+                continue
+
+            urgency = self._compute_urgency_score(item)
+            if urgency < min_score:
+                continue
+
+            rec = self._item_to_journal_record(item)
+            rec["first_seen"] = now
+            rec["last_seen"] = now
+            rec["hits"] = 1
+
+            existing = self._urgent_watchlist.get(url)
+            if existing:
+                rec["first_seen"] = existing.get("first_seen", now)
+                rec["hits"] = int(existing.get("hits", 0) or 0) + 1
+                rec["urgency_score"] = max(float(existing.get("urgency_score", 0.0) or 0.0), urgency)
+
+            self._urgent_watchlist[url] = rec
+            changed += 1
+
+        if changed:
+            logger.info(f"📌 Urgent watchlist updated: +{changed} entries")
+            self._save_watchlist()
+
+    def _build_content_item_from_watchlist(self, rec: Dict[str, Any]) -> ContentItem:
+        published = None
+        raw_pub = rec.get("published_at")
+        if raw_pub:
+            try:
+                published = datetime.fromisoformat(raw_pub)
+            except Exception:
+                published = None
+
+        category_raw = rec.get("category")
+        try:
+            category = ContentCategory(category_raw) if category_raw else ContentCategory.OTHER
+        except Exception:
+            category = ContentCategory.OTHER
+
+        item = ContentItem(
+            title=rec.get("title", ""),
+            url=rec.get("url", ""),
+            source_type=rec.get("source_type", "watchlist"),
+            source_name=rec.get("source_name", "Urgent Watchlist"),
+            description=rec.get("description", ""),
+            published_at=published,
+            category=category,
+            relevance_score=float(rec.get("relevance_score", 0.0) or 0.0),
+            engagement_score=float(rec.get("engagement_score", 0.0) or 0.0),
+        )
+        item.ai_summary = rec.get("ai_summary", "") or ""
+        return item
+
+    def _get_watchlist_replay_candidates(self, limit: int = 6, min_score: float = 7.2) -> list:
+        candidates = []
+        for url, rec in self._urgent_watchlist.items():
+            if url in self._seen_urls:
+                continue
+            urgency = float(rec.get("urgency_score", 0.0) or 0.0)
+            if urgency < min_score:
+                continue
+            candidates.append((urgency, rec.get("last_seen", ""), rec))
+
+        candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        replay_items = [self._build_content_item_from_watchlist(rec) for _, _, rec in candidates[:limit]]
+        if replay_items:
+            logger.info(f"🔁 Watchlist replay candidates: {len(replay_items)}")
+        return replay_items
+
+    def _remove_from_watchlist(self, urls: list) -> None:
+        removed = 0
+        for url in urls:
+            if url and url in self._urgent_watchlist:
+                del self._urgent_watchlist[url]
+                removed += 1
+        if removed:
+            logger.info(f"🧹 Urgent watchlist cleaned: -{removed} processed URLs")
+            self._save_watchlist()
+
     async def run_intel_collection_once(self) -> Dict[str, Any]:
+        if self._intel_run_lock.locked():
+            logger.warning("⚠️ Intel collection already in progress, skipping overlapping request")
+            return {"status": "busy", "message": "intel collection already running"}
+
+        async with self._intel_run_lock:
+            return await self._run_intel_collection_once_impl()
+
+    async def _run_intel_collection_once_impl(self) -> Dict[str, Any]:
         logger.info("📡 Running intel collection pass...")
         all_items = []
         
@@ -453,9 +670,12 @@ class Orchestrator:
                     logger.warning(f"⚠️ LinkedIn bağlanamadı (atlandı): {e}")
 
             if "telegram" in self.config.intel_sources:
+                tg_source = None
                 try:
-                    from intel.telegram_source import TelegramChannelSource
-                    tg_source = TelegramChannelSource()
+                    from intel.telegram_source import telegram_source
+                    tg_source = telegram_source
+                    if not tg_source:
+                        raise RuntimeError("Telegram source not initialized")
                     items = await asyncio.wait_for(tg_source.fetch_latest(limit=5), timeout=30.0)
                     all_items.extend(items)
                     logger.info(f"✅ Telegram: {len(items)} items collected")
@@ -463,26 +683,49 @@ class Orchestrator:
                     logger.warning("⚠️ Telegram: Timeout 30s (atlandı)")
                 except Exception as e:
                     logger.warning(f"⚠️ Telegram intel skipped: {e}")
+                finally:
+                    if tg_source:
+                        try:
+                            await tg_source.disconnect()
+                        except Exception as disc_err:
+                            logger.debug(f"Telegram disconnect skipped: {disc_err}")
+
+            # Persist all collected signals before selection (for missed-opportunity replay).
+            self._append_raw_journal(all_items)
+            self._update_urgent_watchlist(all_items)
 
             # ─── VIRAL SCORING & THREAD GENERATION PIPELINE ───
-            if all_items and self.config.ai_enabled:
+            if self.config.ai_enabled:
                 # Daha önce işlenmiş URL'leri çıkar
                 fresh_items = self._filter_seen(all_items)
+
+                # High-urgency replay: bu turda kaynaklardan gelmese bile watchlist'ten yeniden dene.
+                replay_items = self._get_watchlist_replay_candidates(limit=6, min_score=7.2)
+                if replay_items:
+                    fresh_urls = {i.url for i in fresh_items if getattr(i, "url", "")}
+                    replay_new = [i for i in replay_items if i.url not in fresh_urls]
+                    if replay_new:
+                        logger.info(f"⏱️ Added {len(replay_new)} replay items from urgent watchlist")
+                        fresh_items.extend(replay_new)
+
                 if not fresh_items:
                     logger.info("ℹ️ Tüm toplanan içerikler zaten işlenmiş, yeni tarama gerekli değil.")
                     return {"status": "success", "items_collected": len(all_items), "fresh": 0}
 
                 logger.info(f"🚀 Starting viral thread pipeline for {len(fresh_items)} fresh items (of {len(all_items)} collected)...")
 
-                # Eski pending'leri temizle (yeni tarama yapıyoruz)
-                approval_queue.clear_pending()
+                # Pending item'ları otomatik temizleme.
+                # UI'da açık olan eski item id'leri kaybolup /approval/post-thread 404 üretiyordu.
+                logger.info("ℹ️ Existing pending queue preserved (no clear_pending)")
 
                 # AI: Viral skorla → En iyi N'ini seç → TR+EN thread üret
                 try:
-                    # AI Generation timeout ekle (Gemini/OpenAI yavaş olabilir)
+                    # Thread pipeline free-tier rate limits nedeniyle dakikalar sürebilir.
+                    # 120s timeout gerçek çalışma süresinden kısa kaldığı için fallback'e düşüyordu.
+                    pipeline_timeout = 7200.0
                     results = await asyncio.wait_for(
                         self.ai_generator.generate_viral_threads(fresh_items, top_n=3),
-                        timeout=120.0
+                        timeout=pipeline_timeout
                     )
 
                     # Visibility Enrichment timeout (image generation etc)
@@ -513,7 +756,9 @@ class Orchestrator:
                     logger.info(f"🎉 Viral pipeline complete: {len(results)} threads queued for approval")
 
                     # ✅ İşlenen URL'leri seen-store'a kaydet (tekrar işlenmesini engeller)
-                    self._mark_urls_seen([e["item"].url for e in results if e.get("item")])
+                    processed_urls = [e["item"].url for e in results if e.get("item")]
+                    self._mark_urls_seen(processed_urls)
+                    self._remove_from_watchlist(processed_urls)
 
                     # 📲 Telegram bildirim: Thread'ler hazır
                     try:
@@ -525,17 +770,12 @@ class Orchestrator:
                     except Exception as tg_err:
                         logger.debug(f"Telegram notification skipped: {tg_err}")
                 except Exception as eval_err:
-                    logger.error(f"❌ Viral pipeline failed, falling back to simple tweets: {eval_err}", exc_info=True)
-                    # Fallback: eski tek-tweet yöntemi (ilk 10 fresh item)
-                    fallback_items = fresh_items[:10]
-                    for item in fallback_items:
-                        try:
-                            tweet = await self.ai_generator.generate_tweet_from_content(item)
-                            approval_queue.add(content_item=item, generated_tweet=tweet)
-                        except Exception as gen_err:
-                            title = item.title if hasattr(item, 'title') else item.get('title', 'Unknown Title')
-                            logger.error(f"❌ Fallback tweet generation failed for '{title[:50]}': {gen_err}", exc_info=True)
-                    self._mark_urls_seen([i.url for i in fallback_items])
+                    logger.error(
+                        f"❌ Viral pipeline failed. No fallback content will be enqueued: {eval_err}",
+                        exc_info=True,
+                    )
+                    # No-fallback policy: mevcut pending queue korunur,
+                    # yeni düşük kaliteli içerik eklenmez ve seen_urls güncellenmez.
 
             logger.info(f"✅ Intel collection pass complete. {len(all_items)} items collected, fresh={len(fresh_items) if 'fresh_items' in dir() else len(all_items)}.")
             return {"status": "success", "items_collected": len(all_items)}

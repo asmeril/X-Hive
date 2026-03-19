@@ -76,8 +76,13 @@ function App() {
     setDiagLoading(true);
     try {
       const raw = await invoke<string>("system_diagnose_and_fix");
-      const parsed: DiagResult = JSON.parse(raw);
-      setDiagResult(parsed);
+      try {
+        const parsed: DiagResult = JSON.parse(raw);
+        setDiagResult(parsed);
+      } catch (parseErr: unknown) {
+        const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        setDiagResult({ error: `Tanı cevabı parse edilemedi: ${parseMsg}` });
+      }
       setDiagTime(new Date().toLocaleTimeString("tr-TR"));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

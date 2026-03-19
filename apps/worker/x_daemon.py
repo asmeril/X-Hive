@@ -307,10 +307,10 @@ class XDaemon:
                 (datetime.now(timezone.utc) - self.state.started_at).total_seconds()
             )
 
-        # Check ChromePool health
+        # Check ChromePool health — auto-restarts on driver disconnect
         chrome_healthy = False
         try:
-            chrome_healthy = await self.chrome_pool.is_healthy()
+            chrome_healthy = await self.chrome_pool.ensure_healthy()
         except Exception as e:
             logger.warning(f"ChromePool health check failed: {e}")
 
@@ -940,6 +940,7 @@ class XDaemon:
                 return {
                     "success": True,
                     "reply_url": reply_url,
+                    "tweet_url": reply_url,
                     "text": text,
                 }
 
@@ -1020,6 +1021,7 @@ class XDaemon:
                 return {
                     "success": True,
                     "reply_url": page.url,
+                    "tweet_url": page.url,
                     "text": text,
                 }
 

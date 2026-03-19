@@ -13,12 +13,30 @@ Features:
 import asyncio
 import logging
 import os
+import re as _re
+import time
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_SCOUT_MODEL = os.getenv("GEMINI_SCOUT_MODEL", "models/gemini-2.0-flash-lite")
+GEMINI_WRITER_MODEL = os.getenv("GEMINI_WRITER_MODEL", "models/gemini-2.5-pro")
+# Scout tier: hız + maliyet öncelikli (100+ item skorluyor)
+# flash-lite (en ucuz/hızlı) → 2.5-flash-lite (lite ama yeni nesil) → 2.5-flash (güvenilir production)
+GEMINI_SCOUT_FALLBACK_MODELS = [
+    model.strip()
+    for model in os.getenv("GEMINI_SCOUT_FALLBACK_MODELS", "models/gemini-2.5-flash-lite,models/gemini-2.5-flash").split(",")
+    if model.strip()
+]
+# Writer tier: kalite öncelikli (döngü başına 2-6 çağrı)
+# 2.5-flash (production ~1000 RPM) → 3-flash-preview (yeni nesil bonus) → 2.0-flash (kurtarma)
+GEMINI_WRITER_FALLBACK_MODELS = [
+    model.strip()
+    for model in os.getenv("GEMINI_WRITER_FALLBACK_MODELS", "models/gemini-3-flash-preview,models/gemini-2.0-flash").split(",")
+    if model.strip()
+]
 
 from google import genai
 from google.genai import types
@@ -32,7 +50,10 @@ class AIContentGenerator:
     
     All operations are async and support Turkish prompts for better content quality.
     """
-    
+    # Class-level Gemini API throttle — shared across all coroutines/instances
+    _api_lock: asyncio.Lock = None        # lazy-init (requires running event loop)
+    _last_api_call: float = 0.0           # monotonic timestamp of last call start
+
     def __init__(self):
         """
         Initialize AI Content Generator with Gemini API.
@@ -46,8 +67,18 @@ class AIContentGenerator:
         # Configure Gemini API client
         self.client = genai.Client(api_key=GEMINI_API_KEY)
         
-        # Model name for generation
-        self.model = 'models/gemini-flash-latest'
+        # Two-stage Gemini strategy:
+        # - scout_model: cheaper/faster candidate scoring
+        # - writer_model: stronger model for final viral thread writing
+        self.scout_model = GEMINI_SCOUT_MODEL
+        self.writer_model = GEMINI_WRITER_MODEL
+        self.model = self.writer_model
+        self.scout_models = self._unique_models(
+            [self.scout_model, *GEMINI_SCOUT_FALLBACK_MODELS, self.writer_model]
+        )
+        self.writer_models = self._unique_models(
+            [self.writer_model, *GEMINI_WRITER_FALLBACK_MODELS]
+        )
         
         # Safety settings - more permissive for harmless content
         self.safety_settings = [
@@ -69,7 +100,9 @@ class AIContentGenerator:
             ),
         ]
         
-        logger.info("[OK] AIContentGenerator initialized (Gemini Flash Latest)")
+        logger.info(
+            f"[OK] AIContentGenerator initialized | scout={self.scout_model} | writer={self.writer_model}"
+        )
         
         # Default topics for daily post generation
         self.default_topics = [
@@ -77,12 +110,87 @@ class AIContentGenerator:
             "Verimlilik ipuçları",
             "Teknoloji inovasyonu"
         ]
+
+    def _unique_models(self, models: List[str]) -> List[str]:
+        unique_models = []
+        for model in models:
+            if model and model not in unique_models:
+                unique_models.append(model)
+        return unique_models
+
+    def _truncate_prose(self, text: str, limit: int) -> str:
+        """URL içermeyen düz metni anlam sınırından kırp."""
+        if len(text) <= limit:
+            return text
+        window = text[:limit]
+        for punct in ('. ', '! ', '? '):
+            idx = window.rfind(punct)
+            if idx > limit // 2:
+                return text[:idx + 1].rstrip()
+        for punct in (', ', '; ', ': '):
+            idx = window.rfind(punct)
+            if idx > limit // 2:
+                return text[:idx] + '…'
+        idx = window.rfind(' ')
+        if idx > limit // 2:
+            return text[:idx] + '…'
+        return window[:limit - 1] + '…'
+
+    def _smart_truncate_tweet(self, text: str, limit: int = 270) -> str:
+        """Anlam butunlugunu ve URL'yi koruyarak tweet kirp.
+        URL iceren tweet: URL korunur, onceki metin prose sinirinda kirpilir.
+        URL olmayan tweet: cumle -> virgul -> kelime sinirinda kirp.
+        """
+        if len(text) <= limit:
+            return text
+        url_match = _re.search(r'https?://\S+', text)
+        if url_match:
+            url = url_match.group()
+            pre_url = text[:url_match.start()].strip()
+            post_url = text[url_match.end():].strip()
+            url_part = '\n' + url
+            prose_budget = limit - len(url_part)
+            if prose_budget < 20:
+                return url[:limit]
+            truncated_pre = self._truncate_prose(pre_url, prose_budget)
+            result = truncated_pre + url_part
+            if post_url and len(result) + 1 + len(post_url) <= limit:
+                result += ' ' + post_url
+            return result
+        return self._truncate_prose(text, limit)
+
+    async def _generate_with_model_fallback(
+        self,
+        prompt: str,
+        preferred_models: List[str],
+        **kwargs,
+    ) -> str:
+        last_error = None
+
+        for model_name in self._unique_models(preferred_models):
+            try:
+                if model_name != preferred_models[0]:
+                    logger.warning(f"⚠️ Switching Gemini model fallback -> {model_name}")
+                return await self._generate_with_retry(
+                    prompt,
+                    model=model_name,
+                    **kwargs,
+                )
+            except Exception as exc:
+                last_error = exc
+                logger.warning(f"⚠️ Model {model_name} failed: {exc}")
+
+        raise Exception(f"All Gemini models failed: {last_error}")
     
     async def _generate_with_retry(
         self,
         prompt: str,
         max_retries: int = 3,
-        initial_delay: float = 1.0
+        initial_delay: float = 1.0,
+        model: Optional[str] = None,
+        min_gap_seconds: Optional[float] = None,
+        max_output_tokens: int = 2000,
+        max_backoff_seconds: float = 900.0,
     ) -> str:
         """
         Generate content with exponential backoff retry logic.
@@ -103,57 +211,73 @@ class AIContentGenerator:
         Raises:
             Exception: If all retries fail
         """
-        
+        active_model = model or self.writer_model
+
+        # Lazy-init class-level lock (asyncio.Lock requires a running event loop)
+        if AIContentGenerator._api_lock is None:
+            AIContentGenerator._api_lock = asyncio.Lock()
+
         for attempt in range(max_retries):
             try:
                 logger.debug(f"[RETRY] Attempt {attempt + 1}/{max_retries}")
-                
-                # Call Gemini API
-                response = await asyncio.to_thread(
-                    lambda: self.client.models.generate_content(
-                        model=self.model,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=0.9,
-                            max_output_tokens=2000,
-                            top_p=0.95,
-                            top_k=40,
-                            safety_settings=self.safety_settings
+
+                # Global rate-limiter: one Gemini call at a time.
+                async with AIContentGenerator._api_lock:
+                    enforced_gap = min_gap_seconds if min_gap_seconds is not None else 15.0
+                    gap = enforced_gap - (
+                        time.monotonic() - AIContentGenerator._last_api_call
+                    )
+                    if gap > 0:
+                        logger.info(f"⏳ Gemini throttle: {gap:.1f}s bekleniyor | model={active_model}")
+                        await asyncio.sleep(gap)
+                    AIContentGenerator._last_api_call = time.monotonic()
+
+                    # Call Gemini API (serialized inside lock — one request at a time)
+                    response = await asyncio.to_thread(
+                        lambda: self.client.models.generate_content(
+                            model=active_model,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                temperature=0.9,
+                                max_output_tokens=max_output_tokens,
+                                top_p=0.95,
+                                top_k=40,
+                                safety_settings=self.safety_settings
+                            )
                         )
                     )
-                )
-                
+                    AIContentGenerator._last_api_call = time.monotonic()
+
                 # Extract text from response
                 text = response.text.strip()
                 logger.info(f"✅ Generated content on attempt {attempt + 1}")
                 return text
-                
+
             except Exception as e:
                 error_msg = str(e)
-                
-                # Check if it's a rate limit error (429)
-                if "429" in error_msg or "quota" in error_msg.lower() or "RESOURCE_EXHAUSTED" in error_msg:
-                    # Gemini free tier: RPM=2, minimum 30s bekleme yeterli
-                    # Exponential: 30s → 60s → 120s → 240s → 480s
-                    retry_delay = max(30.0, initial_delay * (2 ** attempt))
-                    logger.warning(f"⏳ Rate limit hit (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay:.1f}s...")
+
+                # RPM / quota rate limit (429 / RESOURCE_EXHAUSTED)
+                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                    extra = min(max_backoff_seconds, max(5.0, initial_delay * (2 ** attempt)))
+                    logger.warning(
+                        f"⏳ Rate limit on {active_model} (attempt {attempt + 1}/{max_retries}), {extra:.0f}s bekleniyor..."
+                    )
                     if attempt < max_retries - 1:
-                        await asyncio.sleep(retry_delay)
-                    
-                # Check if it's a safety filter (finish_reason issue)
+                        await asyncio.sleep(extra)
+                    else:
+                        raise Exception(f"Gemini rate limit on {active_model} after {max_retries} attempts")
+
+                # Safety filter rejection
                 elif "finish_reason" in error_msg or "Invalid operation" in error_msg:
-                    logger.warning(f"⚠️ Content filtered by safety filter (attempt {attempt + 1}/{max_retries})")
-                    # Try again with slight delay
+                    logger.warning(f"⚠️ Content filtered (attempt {attempt + 1}/{max_retries})")
                     if attempt < max_retries - 1:
                         await asyncio.sleep(initial_delay * (attempt + 1))
-                    
+
                 else:
-                    # Other errors - log and retry with exponential backoff
                     logger.error(f"❌ Generation error (attempt {attempt + 1}/{max_retries}): {error_msg}")
                     if attempt < max_retries - 1:
-                        retry_delay = initial_delay * (2 ** attempt)
-                        await asyncio.sleep(retry_delay)
-        
+                        await asyncio.sleep(initial_delay * (2 ** attempt))
+
         # All retries failed - raise exception
         raise Exception(f"Failed to generate content after {max_retries} attempts")
     
@@ -226,7 +350,15 @@ Sadece post'u yaz, ek açıklama yapma.
             logger.debug(f"[INFO] Generating post for topic: {topic} (style: {style})")
             
             # Use retry logic
-            post_text = await self._generate_with_retry(prompt, max_retries=3, initial_delay=1.0)
+            post_text = await self._generate_with_retry(
+                prompt,
+                max_retries=4,
+                initial_delay=5.0,
+                model=self.scout_model,
+                min_gap_seconds=8.0,
+                max_output_tokens=500,
+                max_backoff_seconds=120.0,
+            )
             
             # Truncate if exceeds max_length
             if len(post_text) > max_length:
@@ -343,7 +475,15 @@ Sadece cevabı yaz, ek açıklama yapma.
             logger.debug(f"[INFO] Generating {tone} reply...")
             
             # Use retry logic
-            reply_text = await self._generate_with_retry(prompt, max_retries=3, initial_delay=1.0)
+            reply_text = await self._generate_with_retry(
+                prompt,
+                max_retries=4,
+                initial_delay=5.0,
+                model=self.scout_model,
+                min_gap_seconds=8.0,
+                max_output_tokens=400,
+                max_backoff_seconds=120.0,
+            )
             
             # Truncate if exceeds 280
             if len(reply_text) > 280:
@@ -381,6 +521,33 @@ Sadece cevabı yaz, ek açıklama yapma.
             "category": getattr(content_item, 'category', "") or "",
         }
 
+    def _validate_thread_quality(self, tweets: List[str], language: str) -> None:
+        """Strict quality gate for thread output. Raises ValueError if invalid."""
+        if not tweets:
+            raise ValueError("Empty thread")
+        if len(tweets) < 4 or len(tweets) > 6:
+            raise ValueError(f"Invalid thread length: {len(tweets)} (expected 4-6)")
+
+        first = tweets[0].strip()
+        if "🧵" not in first:
+            raise ValueError("Hook tweet must include 🧵")
+        if "Detaylar 👇" in first or "Details 👇" in first:
+            raise ValueError("Detected fallback-like hook format")
+
+        for i, tw in enumerate(tweets, start=1):
+            if len(tw.strip()) < 40:
+                raise ValueError(f"Tweet {i} too short")
+            # Anlam bütünlüğünü koruyan akıllı kırpma (270 char hedef — URL sayımı için buffer)
+            if len(tweets[i - 1]) > 270:
+                original_len = len(tweets[i - 1])
+                tweets[i - 1] = self._smart_truncate_tweet(tweets[i - 1], limit=270)
+                logger.warning(f"⚠️ Tweet {i} akıllı kırpıldı: {original_len} → {len(tweets[i-1])} karakter")
+
+        # Source link should appear somewhere in the thread (not necessarily the last tweet)
+        has_link = any(("http://" in t or "https://" in t) for t in tweets)
+        if not has_link:
+            raise ValueError("Thread missing source link")
+
     async def generate_tweet_from_content(self, content_item) -> str:
         """
         Generate a tweet specifically based on collected intel content.
@@ -414,9 +581,39 @@ Viral tweet kuralları:
             return await self._generate_with_retry(styled_prompt, max_retries=2, initial_delay=1.0)
         except Exception as e:
             logger.error(f"Failed to generate tweet from content: {e}")
-            return f"{f['title']} detayları burada! 👇\n\n{f['url']} #Teknoloji #{f['source'].replace(' ', '')}"
+            raise
 
     # ─── VIRAL SCORING & THREAD GENERATION ────────────────────
+
+    def _estimate_virality_prior(self, item) -> float:
+        """Cheap heuristic prior before spending LLM tokens."""
+        f = self._extract_content_fields(item)
+        title = (f.get("title") or "").lower()
+        source = (f.get("source") or "").lower()
+        relevance = float(getattr(item, "relevance_score", 0.5) or 0.5)
+        engagement = float(getattr(item, "engagement_score", 0.5) or 0.5)
+
+        score = relevance * 4.0 + engagement * 3.0
+
+        hot_terms = [
+            "openai", "anthropic", "google", "meta", "microsoft", "nvidia", "xai",
+            "gpt", "claude", "grok", "gemini", "bitcoin", "crypto", "lawsuit",
+            "leak", "ban", "launch", "funding", "acquisition", "%", "$", "million", "billion"
+        ]
+        if any(term in title for term in hot_terms):
+            score += 1.5
+        if any(ch.isdigit() for ch in title):
+            score += 0.7
+        if "hacker news" in source or "reddit" in source:
+            score += 0.6
+        if "github" in source or "product hunt" in source:
+            score += 0.4
+
+        return score
+
+    def _select_candidates_for_scoring(self, items: list, limit: int = 12) -> list:
+        ranked = sorted(items, key=self._estimate_virality_prior, reverse=True)
+        return ranked[:limit]
 
     async def score_viral_potential(self, items: list) -> list:
         """
@@ -427,9 +624,11 @@ Viral tweet kuralları:
         if not items:
             return []
 
-        # Başlıkları topla (max 20 item gönder, token limiti için)
+        candidates = self._select_candidates_for_scoring(items, limit=12)
+
+        # Başlıkları topla (önce heuristik ile daraltıldı)
         summaries = []
-        for i, item in enumerate(items[:20]):
+        for i, item in enumerate(candidates):
             f = self._extract_content_fields(item)
             summaries.append(f"{i+1}. [{f['source']}] {f['title']}")
 
@@ -448,13 +647,13 @@ Aşağıdaki haber/içerik listesini oku ve HER BİRİNE 1-10 arası bir viral p
 5. PAYLAŞILABILIRLIK (×1): İnsanlar bunu paylaşarak "akıllı/bilgili" görünür mü?
 6. EVRENSELLIK (×1): Sadece niş mi yoksa geniş kitle mi ilgilenir?
 
-⚠️ DÜŞÜK SKOR VER (1-4):
+⚠️ DÜŞÜK SKOR VER (1-5):
 - Sıradan ürün güncellemesi, versiyon notu
 - "X şirketi Y yaptı" tarzı düz haber
 - Niş akademik makale (geniş kitleyi ilgilendirmeyen)
 - Zaten herkesin bildiği şeyler
 
-✅ YÜKSEK SKOR VER (7-10):
+✅ YÜKSEK SKOR VER (8-10):
 - Endüstriyi sarsacak gelişmeler
 - Parasal/kariyer etkisi olan haberler
 - Büyük şirketlerin skandalları, sızıntıları
@@ -469,9 +668,19 @@ SADECE aşağıdaki formatta JSON döndür, başka hiçbir şey yazma:
 [{{"index": 1, "score": 8}}, {{"index": 2, "score": 3}}, ...]
 """
         try:
-            response = await self._generate_with_retry(prompt, max_retries=5, initial_delay=15.0)
+            response = await self._generate_with_model_fallback(
+                prompt,
+                preferred_models=self.scout_models,
+                max_retries=3,
+                initial_delay=10.0,
+                min_gap_seconds=8.0,
+                max_output_tokens=1200,
+                max_backoff_seconds=120.0,
+            )
             # JSON parse
             import json as _json
+            import re as _re
+
             # Temizle (bazen ```json ... ``` ile sarar)
             clean = response.strip()
             if clean.startswith("```"):
@@ -479,13 +688,32 @@ SADECE aşağıdaki formatta JSON döndür, başka hiçbir şey yazma:
                 if clean.endswith("```"):
                     clean = clean[:-3]
                 clean = clean.strip()
-            
-            scores = _json.loads(clean)
-            
+
+            start = clean.find("[")
+            end = clean.rfind("]")
+            if start != -1 and end != -1 and end > start:
+                clean = clean[start:end + 1]
+
+            try:
+                scores = _json.loads(clean)
+            except Exception:
+                matches = _re.findall(
+                    r'"index"\s*:\s*(\d+)\D+"score"\s*:\s*(\d+)',
+                    clean,
+                    flags=_re.S,
+                )
+                if not matches:
+                    raise
+                scores = [
+                    {"index": int(index), "score": max(1, min(10, int(score)))}
+                    for index, score in matches
+                ]
+                logger.warning("⚠️ Viral scoring response repaired with regex fallback")
+
             # Skoru atama
             scored_items = []
-            score_map = {s["index"]: s["score"] for s in scores}
-            for i, item in enumerate(items[:20]):
+            score_map = {int(s["index"]): int(s["score"]) for s in scores}
+            for i, item in enumerate(candidates):
                 score = score_map.get(i + 1, 5)
                 scored_items.append({"item": item, "viral_score": score})
             
@@ -496,8 +724,8 @@ SADECE aşağıdaki formatta JSON döndür, başka hiçbir şey yazma:
             
         except Exception as e:
             logger.error(f"❌ Viral scoring failed: {e}")
-            # Fallback: hepsine 5 ver
-            return [{"item": item, "viral_score": 5} for item in items]
+            # No-fallback policy: scoring yoksa thread üretimine geçme
+            return []
 
     async def generate_thread(self, content_item, language: str = "tr") -> list:
         """
@@ -533,18 +761,20 @@ Aşağıdaki hook tekniklerinden BİRİNİ kullan:
 - KARŞI SEZGISEL: "Herkes X sanıyor. Gerçek tam tersi."
 🧵 ile başla, sonunda "👇" koy.
 
-📌 TWEET 2-4 - GÖVDe (bilgiyi parçala, her tweet bir nugget):
+📌 TWEET 2-4 - GÖVDE (bilgiyi parçala, her tweet bir nugget):
 - Her tweet tek bir güçlü fikir/veri içersin
 - Kısa cümleler kullan (max 15 kelime per cümle)
 - Somut sayılar, karşılaştırmalar, örnekler ver
 - "Ama asıl mesele şu:" gibi geçiş cümleleri kullan
 - Her tweet tek başına da değer versin (RT edilebilir olsun)
+- En az 1 somut veri, sayı veya karşılaştırma ver
 
 📌 SON TWEET - CTA (harekete geçir):
 - Link ekle
 - "Takip et + 🔔 aç" tarzı CTA
 - Max 2 hashtag
 - Tartışma sorusu sor: "Sen ne düşünüyorsun?"
+- Son tweette KAYNAK LINK zorunlu
 
 ⛔ YAPMA:
 - "Merhaba arkadaşlar" gibi başlama
@@ -561,7 +791,8 @@ Aşağıdaki hook tekniklerinden BİRİNİ kullan:
 - Aranabilir anahtar kelimeleri (AI, GPT, Bitcoin, Startup vb.) metne DOĞAL yedir (hashtag olarak değil)
 - İçerikte geçen şirket/kişi varsa @handle ile etiketle (örn: @OpenAI, @elonmusk)
 
-SADECE tweet metinlerini döndür, her birini --- ile ayır. Başka açıklama yapma.
+SADECE tweet metinlerini döndür, her birini --- ile ayır. Tam olarak 5 tweet üret.
+Başka açıklama yapma.
 """
         else:
             prompt = f"""You are a viral X/Twitter ghostwriter who has written threads with 10M+ impressions.
@@ -590,12 +821,14 @@ Start with 🧵, end with 👇
 - Use concrete numbers, comparisons, examples
 - Transition phrases: "But here's the thing:", "It gets wilder:"
 - Each tweet should be independently retweetable
+- Include at least one concrete number/data point across the body tweets
 
 📌 LAST TWEET - THE CTA (drive action):
 - Include the link
 - Ask a debate question: "What's your take?"
 - Max 2 hashtags
 - "Follow for more" type CTA
+- Include the source LINK in the final tweet
 
 ⛔ DON'T:
 - Start with "Hey everyone" or "Today I want to talk about"
@@ -612,30 +845,33 @@ Start with 🧵, end with 👇
 - Naturally weave in searchable keywords (AI, GPT, Bitcoin, Startup etc.) into the text — NOT as hashtags
 - If a company/person is mentioned in the content, tag their @handle (e.g., @OpenAI, @elonmusk)
 
-Return ONLY the tweet texts, separated by ---. No extra explanation.
+Return ONLY the tweet texts, separated by ---. Produce exactly 5 tweets. No extra explanation.
 """
         
         try:
-            raw = await self._generate_with_retry(prompt, max_retries=5, initial_delay=15.0)
+            raw = await self._generate_with_model_fallback(
+                prompt,
+                preferred_models=self.writer_models,
+                max_retries=2,
+                initial_delay=20.0,
+                min_gap_seconds=20.0,
+                max_output_tokens=2500,
+                max_backoff_seconds=120.0,
+            )
             # --- ile ayır
             tweets = [t.strip() for t in raw.split("---") if t.strip()]
             
             # Boş veya çok kısa olanları filtrele
             tweets = [t for t in tweets if len(t) > 20]
             
-            if not tweets:
-                raise ValueError("Empty thread generated")
+            self._validate_thread_quality(tweets, language)
             
             logger.info(f"✅ Thread generated ({language}): {len(tweets)} tweets")
             return tweets
             
         except Exception as e:
             logger.error(f"❌ Thread generation failed ({language}): {e}")
-            # Fallback: tek tweet
-            if language == "tr":
-                return [f"🧵 {f['title']}\n\nDetaylar 👇\n{f['url']} #Teknoloji"]
-            else:
-                return [f"🧵 {f['title']}\n\nDetails 👇\n{f['url']} #Tech"]
+            raise
 
     async def generate_viral_threads(self, items: list, top_n: int = 3) -> list:
         """
@@ -648,12 +884,11 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
         
         # 1. Viral skorlama
         scored = await self.score_viral_potential(items)
+        if not scored:
+            logger.warning("⚠️ No scored candidates; skipping thread generation")
+            return []
         
-        # Skorlama bitti, thread üretimine geçmeden önce Gemini rate limit için bekle
-        logger.info("⏳ Scoring complete, waiting 45s before thread generation (Gemini free tier)...")
-        await asyncio.sleep(45)
-        
-        # 2. En iyi N tanesini al (skor >= 6 olanları öncelikle)
+        # 2. En iyi N tanesini al (yalnızca yüksek skorlu içerikler)
         top_items = scored[:top_n]
         logger.info(f"🏆 Selected top {len(top_items)} items for thread generation")
         
@@ -662,16 +897,15 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
             item = entry["item"]
             viral_score = entry["viral_score"]
             
-            # Skor çok düşükse (4 ve altı) atla
-            if viral_score <= 4:
+            # Yüksek kalite eşiği: 7 ve altını atla
+            if viral_score <= 7:
                 logger.info(f"⏭️ Skipping low-score item (score={viral_score})")
                 continue
             
             try:
-                # TR thread üret, ardından EN (sıralı — rate limit koruması)
-                # Gemini free tier RPM=2: her istek arasında min 35s bekleme
+                # TR thread üret, ardından EN (sıralı).
+                # Model çağrıları kendi throttle/backoff mekanizmasıyla yönetilir.
                 tr_thread = await self.generate_thread(item, language="tr")
-                await asyncio.sleep(35)  # Gemini rate limit arası bekleme (free tier)
                 en_thread = await self.generate_thread(item, language="en")
                 
                 results.append({
@@ -681,9 +915,6 @@ Return ONLY the tweet texts, separated by ---. No extra explanation.
                     "en_thread": en_thread,
                 })
                 logger.info(f"\u2705 Threads ready (score={viral_score}): {self._extract_content_fields(item)['title'][:50]}...")
-                
-                # İtemler arası bekleme (Gemini free tier: bir sonraki item öncesi)
-                await asyncio.sleep(35)
                 
             except Exception as e:
                 logger.error(f"❌ Thread generation failed for item: {e}")

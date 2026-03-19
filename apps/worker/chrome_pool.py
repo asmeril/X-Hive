@@ -16,6 +16,7 @@ if sys.platform == "win32" and sys.version_info >= (3, 12):
 
 import json
 import logging
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -226,14 +227,17 @@ class ChromePool:
 
     async def get_page(self) -> Page:
         """
-        Get or create page instance.
-        
+        Get page instance, auto-restarting browser if the driver has died.
+
         Returns:
             Page: Playwright page instance
-            
+
         Raises:
-            ChromePoolError: If page is not available
+            ChromePoolError: If page is not available even after restart attempt
         """
+        if self.page is None or self.page.is_closed():
+            logger.info("Page unavailable, attempting auto-restart...")
+            await self.ensure_healthy()
         if self.page is None or self.page.is_closed():
             raise ChromePoolError("Page not available or closed")
         return self.page
@@ -352,13 +356,15 @@ class ChromePool:
     async def is_healthy(self) -> bool:
         """
         Check if Chrome is still responsive.
-        
+        Resets internal state on connection loss so ensure_healthy() can restart cleanly.
+
         Returns:
             bool: True if healthy, False otherwise
         """
         try:
             if self.page is None or self.page.is_closed():
-                logger.warning("Page is closed")
+                logger.warning("Page is closed, clearing pool state")
+                await self._cleanup_on_error()
                 return False
 
             # Simple health check: get page title
@@ -367,11 +373,41 @@ class ChromePool:
             return True
 
         except asyncio.TimeoutError:
-            logger.error("Health check timeout")
+            logger.error("Health check timeout, clearing pool state")
+            await self._cleanup_on_error()
             return False
         except Exception as e:
+            error_str = str(e)
             logger.error(f"Health check failed: {e}")
+            # Browser driver disconnected — reset so initialize() can restart cleanly
+            if any(k in error_str for k in ("Connection closed", "Target closed", "driver", "Broken pipe", "EPIPE")):
+                logger.warning("Browser driver disconnected, resetting pool state")
+                await self._cleanup_on_error()
             return False
+
+    async def ensure_healthy(self) -> bool:
+        """
+        Check health and automatically restart if the browser driver has died.
+        Uses a 60-second cooldown to prevent rapid restart loops.
+
+        Returns:
+            bool: True if healthy (or successfully restored), False otherwise
+        """
+        if await self.is_healthy():
+            return True
+        # Only restart when browser refs were already cleared by is_healthy()
+        if self.browser is None:
+            now = time.monotonic()
+            last = getattr(self, "_last_restart_ts", 0.0)
+            if now - last > 60.0:
+                self._last_restart_ts = now
+                logger.info("🔄 Chrome pool auto-restart triggered...")
+                try:
+                    await self.initialize()
+                    return await self.is_healthy()
+                except Exception as e:
+                    logger.error(f"❌ Chrome auto-restart failed: {e}")
+        return False
 
     async def restart(self) -> None:
         """

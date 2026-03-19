@@ -128,7 +128,7 @@ async def lifespan(app: FastAPI):
             post_times=["09:00", "14:00", "20:00"],
 
             # Intel collection
-            intel_enabled=False,  # TEMPORARILY DISABLED during debugging - causing backend crash
+            intel_enabled=True,
             intel_interval_hours=6,  # Her 6 saatte bir içerik topla
             intel_sources=["github", "google_trends", "hackernews", "reddit", "producthunt", "arxiv", "huggingface", "substack", "perplexity", "telegram"],
 
@@ -883,7 +883,7 @@ async def post_thread(item_id: str, background_tasks: BackgroundTasks):
         tracker = get_interaction_tracker()
         
         # Hangi dilde yayınlanacak (default: tr)
-        thread = item.tr_thread if item.tr_thread else item.en_thread
+        thread = list(item.tr_thread if item.tr_thread else item.en_thread)
         if not thread:
             return {"status": "error", "message": "Thread boş"}
 
@@ -915,18 +915,32 @@ async def post_thread(item_id: str, background_tasks: BackgroundTasks):
                         # İlk tweet (görsel varsa ekle)
                         images = [item.image_url] if item.image_url else None
                         result = await x_daemon.post_tweet(text=tweet_text, images=images)
-                        if result.get("success") and result.get("tweet_url"):
-                            previous_url = result["tweet_url"]
-                            first_tweet_url = result["tweet_url"]
+                        if not result.get("success"):
+                            raise RuntimeError(result.get("error", "First tweet post failed"))
+                        first_url = result.get("tweet_url")
+                        if not first_url:
+                            raise RuntimeError("First tweet posted but tweet_url missing")
+                        previous_url = first_url
+                        first_tweet_url = first_url
                         logger.info(f"🐦 Thread tweet 1/{len(thread)} posted")
                     else:
                         # Reply chain
-                        if previous_url:
-                            result = await x_daemon.reply_to_tweet(
-                                tweet_url=previous_url, text=tweet_text
-                            )
-                            if result.get("success") and result.get("tweet_url"):
-                                previous_url = result["tweet_url"]
+                        if not previous_url:
+                            raise RuntimeError("Reply chain broken: previous tweet URL is missing")
+
+                        # Use thread-aware reply flow and keep chaining with returned reply URL.
+                        result = await x_daemon._post_reply_in_thread(
+                            parent_tweet_url=previous_url,
+                            text=tweet_text,
+                        )
+                        if not result.get("success"):
+                            raise RuntimeError(result.get("error", f"Reply {i+1} failed"))
+
+                        next_url = result.get("tweet_url") or result.get("reply_url")
+                        if not next_url:
+                            raise RuntimeError(f"Reply {i+1} posted but URL missing")
+                        previous_url = next_url
+
                         logger.info(f"🐦 Thread tweet {i+1}/{len(thread)} posted")
                     
                     # Tweet arası bekleme (X rate limit)
@@ -1437,17 +1451,20 @@ async def telegram_status():
         telethon_available = False
         authorized = False
         last_error = ""
+        auth_in_progress = _telegram_intel_auth_state.get("client") is not None
         try:
             from telethon import TelegramClient  # type: ignore
             telethon_available = True
-            if credentials_set:
+            # IMPORTANT: Do not connect here.
+            # UI polls this endpoint frequently; opening the same Telethon SQLite session
+            # while intel collector is active can cause "database is locked".
+            if credentials_set and not auth_in_progress:
                 try:
-                    client = TelegramClient(session_name, int(api_id_raw), api_hash)
-                    await client.connect()
-                    authorized = await client.is_user_authorized()
-                    await client.disconnect()
-                except Exception as intel_err:
-                    last_error = str(intel_err)
+                    authorized = session_file.exists() and session_file.stat().st_size > 0
+                except Exception:
+                    authorized = session_file.exists()
+            if auth_in_progress:
+                last_error = "auth_in_progress"
         except Exception:
             telethon_available = False
 
@@ -1467,6 +1484,7 @@ async def telegram_status():
                     "phone_set": bool(phone),
                     "session_file_exists": session_file.exists(),
                     "authorized": authorized,
+                    "auth_in_progress": auth_in_progress,
                     "last_error": last_error,
                 }
             }

@@ -56,7 +56,6 @@ class TelegramChannelSource(BaseContentSource):
     # Popular AI/Tech Telegram channels (verified large public channels)
     DEFAULT_CHANNELS = [
         'crypto',                # Crypto news (large public channel)
-        'binance',               # Binance official
         'bloomberg',             # Bloomberg
     ]
     
@@ -115,8 +114,14 @@ class TelegramChannelSource(BaseContentSource):
         self.session_path = Path(f"data/telegram/{session_name}.session")
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Channels
-        self.channels = channels or self.DEFAULT_CHANNELS
+        # Channels: env override supports comma-separated usernames
+        env_channels = os.getenv("TELEGRAM_SOURCE_CHANNELS", "").strip()
+        if channels:
+            self.channels = channels
+        elif env_channels:
+            self.channels = [c.strip().lstrip('@') for c in env_channels.split(',') if c.strip()]
+        else:
+            self.channels = self.DEFAULT_CHANNELS
         self.max_messages = max_messages
         self.hours_lookback = hours_lookback
         

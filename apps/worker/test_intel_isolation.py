@@ -26,13 +26,13 @@ async def test_github():
         start = datetime.now()
         items = await asyncio.wait_for(github.fetch_latest(), timeout=30.0)
         elapsed = (datetime.now() - start).total_seconds()
-        print(f"✅ GitHub: {len(items)} items in {elapsed:.1f}s")
+        print(f"[OK] GitHub: {len(items)} items in {elapsed:.1f}s")
         return True
     except asyncio.TimeoutError:
-        print("❌ GitHub: TIMEOUT after 30s")
+        print("[FAIL] GitHub: TIMEOUT after 30s")
         return False
     except Exception as e:
-        print(f"❌ GitHub: ERROR - {e}")
+        print(f"[ERROR] GitHub: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -49,13 +49,13 @@ async def test_google_trends():
         start = datetime.now()
         items = await asyncio.wait_for(trends.fetch_latest(), timeout=30.0)
         elapsed = (datetime.now() - start).total_seconds()
-        print(f"✅ Google Trends: {len(items)} items in {elapsed:.1f}s")
+        print(f"[OK] Google Trends: {len(items)} items in {elapsed:.1f}s")
         return True
     except asyncio.TimeoutError:
-        print("❌ Google Trends: TIMEOUT after 30s")
+        print("[FAIL] Google Trends: TIMEOUT after 30s")
         return False
     except Exception as e:
-        print(f"❌ Google Trends: ERROR - {e}")
+        print(f"[FAIL] Google Trends: ERROR - {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -72,13 +72,13 @@ async def test_hackernews():
         start = datetime.now()
         items = await asyncio.wait_for(hn.fetch_latest(), timeout=20.0)
         elapsed = (datetime.now() - start).total_seconds()
-        print(f"✅ HackerNews: {len(items)} items in {elapsed:.1f}s")
+        print(f"[OK] HackerNews: {len(items)} items in {elapsed:.1f}s")
         return True
     except asyncio.TimeoutError:
-        print("❌ HackerNews: TIMEOUT after 20s")
+        print("[FAIL] HackerNews: TIMEOUT after 20s")
         return False
     except Exception as e:
-        print(f"❌ HackerNews: ERROR - {e}")
+        print(f"[FAIL] HackerNews: ERROR - {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -95,13 +95,13 @@ async def test_reddit():
         start = datetime.now()
         items = await asyncio.wait_for(reddit.fetch_latest(), timeout=45.0)
         elapsed = (datetime.now() - start).total_seconds()
-        print(f"✅ Reddit: {len(items)} items in {elapsed:.1f}s")
+        print(f"[OK] Reddit: {len(items)} items in {elapsed:.1f}s")
         return True
     except asyncio.TimeoutError:
-        print("❌ Reddit: TIMEOUT after 45s")
+        print("[FAIL] Reddit: TIMEOUT after 45s")
         return False
     except Exception as e:
-        print(f"❌ Reddit: ERROR - {e}")
+        print(f"[FAIL] Reddit: ERROR - {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -118,13 +118,13 @@ async def test_producthunt():
         start = datetime.now()
         items = await asyncio.wait_for(ph.fetch_latest(), timeout=20.0)
         elapsed = (datetime.now() - start).total_seconds()
-        print(f"✅ ProductHunt: {len(items)} items in {elapsed:.1f}s")
+        print(f"[OK] ProductHunt: {len(items)} items in {elapsed:.1f}s")
         return True
     except asyncio.TimeoutError:
-        print("❌ ProductHunt: TIMEOUT after 20s")
+        print("[FAIL] ProductHunt: TIMEOUT after 20s")
         return False
     except Exception as e:
-        print(f"❌ ProductHunt: ERROR - {e}")
+        print(f"[FAIL] ProductHunt: ERROR - {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -141,13 +141,13 @@ async def test_substack():
         start = datetime.now()
         items = await asyncio.wait_for(sub.fetch_latest(), timeout=15.0)
         elapsed = (datetime.now() - start).total_seconds()
-        print(f"✅ Substack: {len(items)} items in {elapsed:.1f}s")
+        print(f"[OK] Substack: {len(items)} items in {elapsed:.1f}s")
         return True
     except asyncio.TimeoutError:
-        print("❌ Substack: TIMEOUT after 15s")
+        print("[FAIL] Substack: TIMEOUT after 15s")
         return False
     except Exception as e:
-        print(f"❌ Substack: ERROR - {e}")
+        print(f"[FAIL] Substack: ERROR - {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -164,13 +164,13 @@ async def test_telegram():
         start = datetime.now()
         items = await asyncio.wait_for(tg.fetch_latest(limit=5), timeout=30.0)
         elapsed = (datetime.now() - start).total_seconds()
-        print(f"✅ Telegram: {len(items)} items in {elapsed:.1f}s")
+        print(f"[OK] Telegram: {len(items)} items in {elapsed:.1f}s")
         return True
     except asyncio.TimeoutError:
-        print("❌ Telegram: TIMEOUT after 30s")
+        print("[FAIL] Telegram: TIMEOUT after 30s")
         return False
     except Exception as e:
-        print(f"❌ Telegram: ERROR - {e}")
+        print(f"[FAIL] Telegram: ERROR - {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -201,14 +201,14 @@ async def test_ai_generation():
             timeout=30.0
         )
         elapsed = (datetime.now() - start).total_seconds()
-        print(f"✅ AI Generation: Tweet generated in {elapsed:.1f}s")
+        print(f"[OK] AI Generation: Tweet generated in {elapsed:.1f}s")
         print(f"   Tweet: {tweet[:80]}...")
         return True
     except asyncio.TimeoutError:
-        print("❌ AI Generation: TIMEOUT after 30s")
+        print("[FAIL] AI Generation: TIMEOUT after 30s")
         return False
     except Exception as e:
-        print(f"❌ AI Generation: ERROR - {e}")
+        print(f"[FAIL] AI Generation: ERROR - {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -237,10 +237,10 @@ async def main():
     for name, test_func in tests:
         try:
             result = await test_func()
-            results[name] = "✅ PASS" if result else "❌ FAIL"
+            results[name] = "[OK] PASS" if result else "[FAIL] FAIL"
         except Exception as e:
-            results[name] = f"❌ ERROR: {e}"
-            print(f"⚠️ Test wrapper caught exception: {e}")
+            results[name] = f"[FAIL] ERROR: {e}"
+            print(f"[WARN] Test wrapper caught exception: {e}")
             import traceback
             traceback.print_exc()
     

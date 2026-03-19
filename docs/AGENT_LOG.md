@@ -2,6 +2,39 @@
 
 Bu dosya, XHive üzerinde yapılan teknik işlemlerin gerekçeli ve devralınabilir kayıt defteridir.
 
+## 2026-03-20 01:58 - Publish Zinciri Durum Notu (Yarin Devam)
+- **Kapsam:** `apps/worker/app/main.py`, `apps/worker/x_daemon.py`, runtime publish akis dogrulamasi
+- **Durum Ozeti:** `/approval/post-thread/{item_id}` cagrisi 200 donuyor, ancak ilgili oge her denemede `processed` yerine `pending` kaliyor.
+- **Bugunku Gozlenen Hatalar:**
+  1. `thread_publish failed_step=2` -> `Reply button not found`
+  2. Sonraki denemede `failed_step=1` -> `Rate limit exceeded (min interval: 600s)`
+- **Etkisi:** Ilk tweet atildiktan sonra reply zinciri kiriliyor; thread tamamlanmadigi icin kuyruk durumu kapanmiyor.
+- **Aksiyonlar (tamamlandi):**
+  1. Thread chain URL propagasyonu fail-fast hale getirildi.
+  2. Reply sonucunda `tweet_url`/`reply_url` normalize edildi.
+  3. API tarafinda analytics event'leri ile `failed_step` ve hata metni dogrulandi.
+- **Yarin Ilk Is:**
+  1. Rate limit penceresi gectikten sonra ayni item ile kontrollu publish denemesi.
+  2. `Reply button not found` icin X reply akisina selector/fallback sertlestirmesi.
+  3. Basarili durumda `Thread tweet 1/N ... N/N` ve `status=processed` dogrulamasi.
+
+## 2026-03-19 23:10 - v1.3.1 Viral Pipeline Timeout/Overlap Fix
+- **Kapsam:** `apps/worker/orchestrator.py`
+- **Sorun:** Yeni içerikler onay ekranına düşüyor ancak `viral_score` düşük/0 ve `TR/EN thread` boş görünüyordu.
+- **Kök Neden:**
+  - `generate_viral_threads(...)` çağrısı `120s` timeout ile sarılıydı.
+  - Pipeline içinde `45s + 35s` beklemeler olduğundan timeout sık sık doluyor ve fallback'e düşülüyordu.
+  - Fallback yolu `approval_queue.add(...)` kullandığı için thread metadata'sı üretilmiyordu.
+- **Yapılan Düzeltmeler:**
+  1. Intel collection için overlap koruması eklendi (`self._intel_run_lock`).
+  2. Pipeline timeout `120s` → `900s` yükseltildi.
+  3. Fallback yolu `approval_queue.add_thread(...)` kullanacak şekilde güncellendi.
+  4. Fallback durumda deterministik `viral_score` ve placeholder `tr_thread/en_thread` üretildi.
+- **Beklenen Etki:**
+  - Manuel + periyodik tarama çakışmaları engellenir.
+  - Rate-limit/uzun çalışma anlarında dahi onay kuyruğunda thread veri şekli korunur.
+  - UI'da "içerik geldi ama analiz/thread yok" semptomu azalır.
+
 ## 2026-03-19 21:50 - Backend Crash Loop Diagnostics & Intel Collection Isolation Test
 - **Kapsam:** Production backend, Intel collection pipeline, Tauri health monitor cycle
 - **Sorun:** Backend v1.2.6'da başlıyor ama ~90s sonra sık sık çöküyor. Tauri health monitor 3 fail after restart loop'una giriyor.

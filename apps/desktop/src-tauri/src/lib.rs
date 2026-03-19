@@ -4,9 +4,12 @@ use std::thread;
 use std::time::Duration;
 use std::path::{Path, PathBuf};
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+
+static BACKEND_START_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 /// Write a debug message to %LOCALAPPDATA%\XHive\tauri_debug.log
 /// This is essential because GUI apps have no visible stdout/stderr.
@@ -206,6 +209,14 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 fn cleanup_backend_processes() {}
 
 fn start_backend() {
+    if BACKEND_START_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        debug_log("start_backend skipped: startup already in progress");
+        return;
+    }
+
     thread::spawn(|| {
         // Ensure no stale/duplicate backend processes remain
         cleanup_backend_processes();
@@ -216,6 +227,7 @@ fn start_backend() {
         if let Ok(resp) = check {
             if resp.status().is_success() {
                 debug_log("Backend already running");
+                BACKEND_START_IN_PROGRESS.store(false, Ordering::SeqCst);
                 return;
             }
         }
@@ -228,8 +240,14 @@ fn start_backend() {
         #[cfg(target_os = "windows")]
         {
             let (python_executable, mut python_prefix_args) = resolve_python_executable(&worker_path);
-            python_prefix_args.push("-m".to_string());
-            python_prefix_args.push("app.main".to_string());
+            let run_py = worker_path.join("run.py");
+            if run_py.exists() {
+                python_prefix_args.push(run_py.to_string_lossy().to_string());
+            } else {
+                // Fallback for older installs missing run.py
+                python_prefix_args.push("-m".to_string());
+                python_prefix_args.push("app.main".to_string());
+            }
 
             debug_log(&format!("Python executable: {}", python_executable));
             debug_log(&format!("Worker path: {:?}", worker_path));
@@ -238,6 +256,7 @@ fn start_backend() {
             // Worker path yoksa oluştur
             if let Err(e) = std::fs::create_dir_all(&worker_path) {
                 debug_log(&format!("Cannot create worker dir {:?}: {}", worker_path, e));
+                BACKEND_START_IN_PROGRESS.store(false, Ordering::SeqCst);
                 return;
             }
 
@@ -249,6 +268,7 @@ fn start_backend() {
                         "Backend start aborted: missing {:?}. Installer worker files are incomplete.",
                         entrypoint
                     ));
+                    BACKEND_START_IN_PROGRESS.store(false, Ordering::SeqCst);
                     return;
                 }
             }
@@ -261,6 +281,7 @@ fn start_backend() {
                 Ok(f) => f,
                 Err(e) => {
                     debug_log(&format!("Cannot create stdout log {:?}: {}", log_file, e));
+                    BACKEND_START_IN_PROGRESS.store(false, Ordering::SeqCst);
                     return;
                 }
             };
@@ -268,6 +289,7 @@ fn start_backend() {
                 Ok(f) => f,
                 Err(e) => {
                     debug_log(&format!("Cannot create stderr log {:?}: {}", err_file, e));
+                    BACKEND_START_IN_PROGRESS.store(false, Ordering::SeqCst);
                     return;
                 }
             };
@@ -287,6 +309,7 @@ fn start_backend() {
                 Ok(child) => debug_log(&format!("Backend process spawned with PID: {}", child.id())),
                 Err(e) => {
                     debug_log(&format!("Failed to spawn backend: {}", e));
+                    BACKEND_START_IN_PROGRESS.store(false, Ordering::SeqCst);
                     return;
                 }
             }
@@ -310,6 +333,7 @@ fn start_backend() {
             if let Ok(resp) = reqwest::blocking::get("http://127.0.0.1:8765/health") {
                 if resp.status().is_success() {
                     debug_log(&format!("Backend started successfully after {}s!", i));
+                    BACKEND_START_IN_PROGRESS.store(false, Ordering::SeqCst);
                     return;
                 }
             }
@@ -318,6 +342,7 @@ fn start_backend() {
             }
         }
         debug_log("Backend failed to start after 60s - check backend_stderr.log");
+        BACKEND_START_IN_PROGRESS.store(false, Ordering::SeqCst);
     });
 }
 
@@ -414,6 +439,7 @@ async fn call_worker_api(method: String, endpoint: String, body: Option<String>)
 #[tauri::command]
 fn system_diagnose_and_fix() -> String {
     let ps_script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
 $r = @{
     timestamp       = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
     python_procs    = @()
@@ -429,13 +455,34 @@ $all = Get-CimInstance Win32_Process | Where-Object {
     $_.Name -like "python*" -and ($_.CommandLine -match "-m app\.main" -or $_.CommandLine -match "run\.py")
 }
 $r.python_procs = @($all | ForEach-Object {
+    $rawCmd = if ($_.CommandLine) { $_.CommandLine } else { "" }
+    # JSON parse hatalarını tetikleyebilen kontrol karakterlerini temizle
+    $safeCmd = ($rawCmd -replace "[\x00-\x1F]", " ")
     @{
         pid  = [int]$_.ProcessId
+        ppid = [int]$_.ParentProcessId
         type = if ($_.CommandLine -match "\.venv") { "venv" } else { "global" }
-        cmd  = $_.CommandLine.Substring(0, [Math]::Min($_.CommandLine.Length, 90))
+        cmd  = $safeCmd.Substring(0, [Math]::Min($safeCmd.Length, 120))
     }
 })
 $r.python_count = $all.Count
+
+# venv parent + global child run.py/app.main çifti bazı kurulumlarda normaldir.
+$venv_procs = @($all | Where-Object { $_.CommandLine -match "\.venv" })
+$global_procs = @($all | Where-Object { $_.CommandLine -notmatch "\.venv" })
+$normal_dual_mode = $false
+if ($venv_procs.Count -eq 1 -and $global_procs.Count -eq 1) {
+    if ([int]$global_procs[0].ParentProcessId -eq [int]$venv_procs[0].ProcessId) {
+        $normal_dual_mode = $true
+    }
+}
+if ($normal_dual_mode) {
+    # UI tarafında false-positive "2 proses" alarmını engelle
+    $r.python_count = 1
+    $r.normal_dual_mode = $true
+} else {
+    $r.normal_dual_mode = $false
+}
 
 # 1.5 Node (Playwright) processes
 $nodes = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
@@ -446,15 +493,7 @@ foreach ($node in $nodes) {
     $r.killed_pids += [int]$node.ProcessId
     $r.fixes_applied += "Killed hanging Node (Playwright) PID $($node.ProcessId)"
 }
-$global_procs = @($all | Where-Object { $_.CommandLine -notmatch "\.venv" })
-foreach ($proc in $global_procs) {
-    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
-    $r.killed_pids += [int]$proc.ProcessId
-    $r.fixes_applied += "Killed global Python PID $($proc.ProcessId)"
-}
-
 # 3. Fazla venv süreci varsa (birden fazla) en eskisini öldür
-$venv_procs = @($all | Where-Object { $_.CommandLine -match "\.venv" })
 if ($venv_procs.Count -gt 1) {
     $sorted = $venv_procs | Sort-Object ProcessId -Descending
     $to_kill = $sorted | Select-Object -Skip 1
@@ -470,7 +509,8 @@ $r.port_listeners = @(netstat -ano | Select-String ":8765\s.*LISTEN").Count
 
 # 5. API sağlık kontrolü
 try {
-    $resp = Invoke-RestMethod "http://localhost:8765/system/status" -TimeoutSec 3
+    $health = Invoke-RestMethod "http://localhost:8765/health" -TimeoutSec 3
+    $resp = Invoke-RestMethod "http://localhost:8765/system/status" -TimeoutSec 8
     $r.api_ok = $true
     $r.orchestrator_running = $resp.services.orchestrator.running
     $r.scheduler_running    = $resp.services.scheduler.running
@@ -506,7 +546,18 @@ $r | ConvertTo-Json -Depth 4
                 if stdout.trim().is_empty() {
                     r#"{"error":"Tanı scripti çıktı vermedi"}"#.to_string()
                 } else {
-                    stdout.trim().to_string()
+                    let raw = stdout.trim();
+                    match serde_json::from_str::<serde_json::Value>(raw) {
+                        Ok(json) => serde_json::to_string(&json).unwrap_or_else(|_| raw.to_string()),
+                        Err(e) => {
+                            let wrapped = serde_json::json!({
+                                "error": format!("Tanı çıktısı JSON parse edilemedi: {}", e),
+                                "raw": raw,
+                            });
+                            serde_json::to_string(&wrapped)
+                                .unwrap_or_else(|_| r#"{"error":"Tanı çıktısı parse edilemedi"}"#.to_string())
+                        }
+                    }
                 }
             }
             Err(e) => format!(r#"{{"error":"Script başlatılamadı: {}"}}"#, e),
@@ -526,44 +577,9 @@ fn start_background_health_monitor() {
         thread::sleep(Duration::from_secs(75));
         let mut consecutive_failures = 0u32;
         loop {
-            #[cfg(target_os = "windows")]
-            {
-                let ps = r#"
-$all = Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -like "python*" -and ($_.CommandLine -match "-m app\.main" -or $_.CommandLine -match "run\.py")
-}
-
-# Kill global Python processes
-$global_procs = @($all | Where-Object { $_.CommandLine -notmatch "\.venv" })
-foreach ($proc in $global_procs) {
-    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
-}
-
-# Kill Playwright Node processes
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
-    $_.CommandLine -match "playwright" -and $_.CommandLine -match "XHive"
-} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-
-# Fazla venv süreci
-$venv = @(Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -like "python*" -and $_.CommandLine -match "\.venv.*-m app\.main"
-})
-if ($venv.Count -gt 1) {
-    $venv | Sort-Object ProcessId -Descending | Select-Object -Skip 1 |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-}
-"#;
-                let _ = Command::new("powershell.exe")
-                    .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps])
-                    .creation_flags(0x08000000)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-            }
-
             // Backend ölmüşse otomatik yeniden başlat
             let backend_alive = reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(6))
+                .timeout(Duration::from_secs(10))
                 .build()
                 .ok()
                 .and_then(|c| c.get("http://127.0.0.1:8765/health").send().ok())
@@ -613,8 +629,13 @@ if ($venv.Count -gt 1) {
                     let listener_count = has_listener.parse::<u32>().unwrap_or(0);
                     let python_count = has_python.parse::<u32>().unwrap_or(0);
 
-                    if listener_count == 0 && python_count == 0 {
-                        debug_log("Health monitor: backend absent, auto-restarting...");
+                    // Listener yoksa backend fiilen servis veremiyor demektir.
+                    // Stale python process kalsa bile cleanup+restart güvenle toparlar.
+                    if listener_count == 0 {
+                        debug_log(&format!(
+                            "Health monitor: backend unhealthy (listener=0, python={}), auto-restarting...",
+                            python_count
+                        ));
                         start_backend();
                     } else {
                         debug_log(&format!(
