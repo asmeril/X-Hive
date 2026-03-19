@@ -128,7 +128,7 @@ async def lifespan(app: FastAPI):
             post_times=["09:00", "14:00", "20:00"],
 
             # Intel collection
-            intel_enabled=True,
+            intel_enabled=False,  # TEMPORARILY DISABLED during debugging - causing backend crash
             intel_interval_hours=6,  # Her 6 saatte bir içerik topla
             intel_sources=["github", "google_trends", "hackernews", "reddit", "producthunt", "arxiv", "huggingface", "substack", "perplexity", "telegram"],
 
