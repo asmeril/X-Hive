@@ -94,11 +94,8 @@ async def lifespan(app: FastAPI):
     # Initialize Chrome Pool
     try:
         chrome_pool = ChromePool()
-        await asyncio.wait_for(chrome_pool.initialize(), timeout=30.0)
+        await chrome_pool.initialize()
         logger.info("✅ Chrome pool initialized")
-    except asyncio.TimeoutError:
-        logger.error("❌ Chrome pool initialization timed out (30s) — running without Chrome")
-        logger.warning("⚠️ Worker running without Chrome (limited functionality)")
     except Exception as e:
         logger.error(f"❌ Chrome pool initialization failed: {e}")
         logger.warning("⚠️ Worker running without Chrome (limited functionality)")
