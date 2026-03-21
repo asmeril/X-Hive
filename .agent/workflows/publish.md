@@ -20,7 +20,7 @@ if (Test-Path "$PSScriptRoot/../../bump-version.ps1") {
 }
 ```
 
-## 1) Zorunlu Tauri Release Build
+## 1) Tauri Release Build Gerekliligi
 ```powershell
 # Set-Location to apps/desktop regardless of where the repo is
 Set-Location "$PSScriptRoot/../apps/desktop" -ErrorAction SilentlyContinue
@@ -42,6 +42,7 @@ Not:
 Not:
 - `apps/desktop` veya `apps/desktop/src-tauri` tarafında değişiklik varsa bu adım atlanamaz.
 - Installer, `apps/desktop/src-tauri/target/release/x-hive-desktop.exe` dosyasını paketler.
+- Sadece `apps/worker/**` tarafında değişiklik varsa `npm run tauri build` zorunlu değildir; `installer/build_setup_versioned.ps1` varsayılan fast build modu kullanılabilir.
 
 ## 2) Versioned Setup Build (Önerilen Tek Komut)
 ```powershell
@@ -80,9 +81,9 @@ Set-Location ".." -ErrorAction SilentlyContinue
 git status
 git add .
 git commit -m "release: publish workflow run and setup output update"
-git push origin master
+git push origin main
 ```
 
 Notlar:
 - Commit öncesi `docs/AGENT_LOG.md` güncel olmalı.
-- Branch farklıysa `master` yerine aktif branch kullanılmalı.
+- Branch farklıysa `main` yerine aktif branch kullanılmalı.
