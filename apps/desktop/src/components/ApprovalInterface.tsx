@@ -1,40 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-
-interface ContentItemData {
-  title: string;
-  url: string;
-  source_name: string;
-  source_type: string;
-  category: string | null;
-}
-
-interface ApprovalItem {
-  id: string;
-  tweet_id: string;
-  generated_tweet: string;
-  status: string;
-  created_at: string;
-  viral_score: number;
-  tr_thread: string[];
-  en_thread: string[];
-  mentions: string[];
-  keywords: string[];
-  image_url: string | null;
-  published_languages?: Record<string, boolean>;
-  published_urls?: Record<string, string>;
-  sniper_targets: Array<{ username: string; handle: string; name: string; relevance_score: number }>;
-  content_item: ContentItemData;
-}
-
-interface ApiResponse {
-  status: string;
-  data?: {
-    items: ApprovalItem[];
-    total: number;
-  };
-  message?: string;
-}
+import type { ApprovalItem, ApprovalResponse, ApprovalSummary, PublishStateValue } from "../types/daemon";
 
 const VIRAL_COLORS: Record<string, string> = {
   high: "#22c55e",   // 8-10
@@ -57,11 +23,20 @@ function getViralLabel(score: number): string {
 
 const ApprovalInterface: React.FC = () => {
   const [items, setItems] = useState<ApprovalItem[]>([]);
+  const [summary, setSummary] = useState<ApprovalSummary>({
+    pending: 0,
+    approved: 0,
+    publishing: 0,
+    failed: 0,
+    processed: 0,
+    rejected: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [langTab, setLangTab] = useState<Record<string, "tr" | "en">>({});
+  const [activeTab, setActiveTab] = useState<"pending" | "approved" | "publishing" | "failed" | "processed">("pending");
 
   const fetchItems = useCallback(async (showSpinner: boolean = true): Promise<number> => {
     try {
@@ -69,14 +44,23 @@ const ApprovalInterface: React.FC = () => {
       setError(null);
       const response = await invoke<string>("call_worker_api", {
         method: "GET",
-        endpoint: "/approval/pending",
+        endpoint: "/approval/items",
       });
-      const parsed: ApiResponse = JSON.parse(response);
+      const parsed: ApprovalResponse = JSON.parse(response);
       if (parsed.status === "success" && parsed.data?.items) {
         setItems(parsed.data.items);
+        setSummary(parsed.data.summary || {
+          pending: 0,
+          approved: 0,
+          publishing: 0,
+          failed: 0,
+          processed: 0,
+          rejected: 0,
+        });
         return parsed.data.items.length;
       } else {
         setItems([]);
+        setSummary({ pending: 0, approved: 0, publishing: 0, failed: 0, processed: 0, rejected: 0 });
         return 0;
       }
     } catch (e: any) {
@@ -119,7 +103,7 @@ const ApprovalInterface: React.FC = () => {
       });
       const parsed = JSON.parse(response);
       if (parsed.status === "success") {
-        setItems(prev => prev.filter(item => item.tweet_id !== itemId));
+        await fetchItems(false);
       }
     } catch (e: any) {
       setError(e.message);
@@ -134,7 +118,7 @@ const ApprovalInterface: React.FC = () => {
       });
       const parsed = JSON.parse(response);
       if (parsed.status === "success") {
-        setItems(prev => prev.filter(item => item.tweet_id !== itemId));
+        await fetchItems(false);
       }
     } catch (e: any) {
       setError(e.message);
@@ -184,7 +168,7 @@ const ApprovalInterface: React.FC = () => {
       });
       const parsed = JSON.parse(response);
       if (parsed.status === "success") {
-        setItems([]);
+        await fetchItems(false);
       }
     } catch (e: any) {
       setError(e.message);
@@ -199,6 +183,39 @@ const ApprovalInterface: React.FC = () => {
   const setLang = (id: string, lang: "tr" | "en") => {
     setLangTab(prev => ({ ...prev, [id]: lang }));
   };
+
+  const tabItems = items.filter((item) => {
+    const publishState = (item.publish_state || "idle") as PublishStateValue;
+    if (activeTab === "pending") return item.status === "pending";
+    if (activeTab === "approved") return (item.status === "approved" || item.status === "edited") && publishState !== "publishing" && publishState !== "failed";
+    if (activeTab === "publishing") return publishState === "publishing";
+    if (activeTab === "failed") return publishState === "failed";
+    if (activeTab === "processed") return item.status === "processed" || publishState === "completed";
+    return false;
+  });
+
+  const tabButton = (
+    key: "pending" | "approved" | "publishing" | "failed" | "processed",
+    label: string,
+    count: number,
+  ) => (
+    <button
+      key={key}
+      onClick={() => setActiveTab(key)}
+      style={{
+        backgroundColor: activeTab === key ? "#2563eb" : "#1e293b",
+        color: "white",
+        padding: "8px 14px",
+        borderRadius: "999px",
+        border: activeTab === key ? "1px solid #3b82f6" : "1px solid #334155",
+        cursor: "pointer",
+        fontSize: "13px",
+        fontWeight: 600,
+      }}
+    >
+      {label} ({count})
+    </button>
+  );
 
   return (
     <div style={{
@@ -273,6 +290,15 @@ const ApprovalInterface: React.FC = () => {
           </div>
         )}
 
+        {/* Tabs */}
+        <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" }}>
+          {tabButton("pending", "Bekleyen", summary.pending)}
+          {tabButton("approved", "Onaylanan", summary.approved)}
+          {tabButton("publishing", "Yayınlanan İş", summary.publishing)}
+          {tabButton("failed", "Hatalı", summary.failed)}
+          {tabButton("processed", "Tamamlanan", summary.processed)}
+        </div>
+
         {/* Loading */}
         {loading && (
           <div style={{ textAlign: "center", padding: "60px" }}>
@@ -292,14 +318,14 @@ const ApprovalInterface: React.FC = () => {
         )}
 
         {/* Empty */}
-        {!loading && items.length === 0 && !error && (
+        {!loading && tabItems.length === 0 && !error && (
           <div style={{
             textAlign: "center", padding: "60px",
             backgroundColor: "#1e293b", borderRadius: "12px"
           }}>
             <div style={{ fontSize: "48px" }}>📭</div>
             <div style={{ marginTop: "16px", fontSize: "18px", color: "#d1d5db" }}>
-              Bekleyen thread yok
+              Bu sekmede içerik yok
             </div>
             <div style={{ marginTop: "8px", color: "#6b7280", fontSize: "14px" }}>
               "Yeni Tarama" ile viral içerikleri keşfedin
@@ -308,9 +334,9 @@ const ApprovalInterface: React.FC = () => {
         )}
 
         {/* Thread Cards */}
-        {items.length > 0 && (
+        {tabItems.length > 0 && (
           <div style={{ display: "grid", gap: "16px" }}>
-            {items.map((item: ApprovalItem) => {
+            {tabItems.map((item: ApprovalItem) => {
               const isExpanded = expandedId === item.tweet_id;
               const currentLang = getLang(item.tweet_id);
               const thread = currentLang === "tr" ? (item.tr_thread || []) : (item.en_thread || []);
@@ -318,6 +344,7 @@ const ApprovalInterface: React.FC = () => {
               const hasThread = thread.length > 0;
               const trPublished = Boolean(item.published_languages?.tr);
               const enPublished = Boolean(item.published_languages?.en);
+              const publishState = item.publish_state || "idle";
 
               return (
                 <div key={item.tweet_id} style={{
@@ -390,6 +417,9 @@ const ApprovalInterface: React.FC = () => {
                         </span>
                         <span style={{ color: enPublished ? "#22c55e" : "#6b7280" }}>
                           🇬🇧 {enPublished ? "yayında" : "yayınlanmadı"}
+                        </span>
+                        <span style={{ color: publishState === "failed" ? "#f87171" : publishState === "publishing" ? "#fbbf24" : "#94a3b8" }}>
+                          ⚙️ {publishState}
                         </span>
                         <span>🕐 {new Date(item.created_at).toLocaleTimeString("tr-TR")}</span>
                       </div>
@@ -531,6 +561,19 @@ const ApprovalInterface: React.FC = () => {
                         </div>
                       )}
 
+                      {item.last_error && (
+                        <div style={{
+                          backgroundColor: "#7f1d1d",
+                          color: "#fecaca",
+                          padding: "10px 12px",
+                          borderRadius: "8px",
+                          marginBottom: "16px",
+                          fontSize: "13px",
+                        }}>
+                          Son hata: {item.last_error}
+                        </div>
+                      )}
+
                       {/* Thread Tweets */}
                       {hasThread ? (
                         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -568,7 +611,7 @@ const ApprovalInterface: React.FC = () => {
                       <div style={{ display: "flex", gap: "12px", marginTop: "16px", flexWrap: "wrap" }}>
                         <button
                           onClick={() => handlePostThread(item.tweet_id, "tr")}
-                          disabled={trPublished || !item.tr_thread?.length}
+                          disabled={trPublished || !item.tr_thread?.length || publishState === "publishing"}
                           style={{
                             backgroundColor: trPublished ? "#334155" : "#6366f1", color: "white",
                             padding: "10px 24px", borderRadius: "8px",
@@ -581,7 +624,7 @@ const ApprovalInterface: React.FC = () => {
                         </button>
                         <button
                           onClick={() => handlePostThread(item.tweet_id, "en")}
-                          disabled={enPublished || !item.en_thread?.length}
+                          disabled={enPublished || !item.en_thread?.length || publishState === "publishing"}
                           style={{
                             backgroundColor: enPublished ? "#334155" : "#0ea5e9", color: "white",
                             padding: "10px 24px", borderRadius: "8px",
@@ -607,6 +650,7 @@ const ApprovalInterface: React.FC = () => {
                         )}
                         <button
                           onClick={() => handleApprove(item.tweet_id)}
+                          disabled={publishState === "publishing" || item.status === "processed"}
                           style={{
                             backgroundColor: "#10b981", color: "white",
                             padding: "10px 24px", borderRadius: "8px",
@@ -618,6 +662,7 @@ const ApprovalInterface: React.FC = () => {
                         </button>
                         <button
                           onClick={() => handleReject(item.tweet_id)}
+                          disabled={publishState === "publishing" || item.status === "processed"}
                           style={{
                             backgroundColor: "#ef4444", color: "white",
                             padding: "10px 24px", borderRadius: "8px",

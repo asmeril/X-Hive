@@ -21,6 +21,15 @@ class ApprovalStatus(Enum):
     PROCESSED = "processed"
 
 
+class PublishState(Enum):
+    """Publish lifecycle states independent from approval status."""
+    IDLE = "idle"
+    PUBLISHING = "publishing"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    COMPLETED = "completed"
+
+
 class ApprovalQueueItem:
     """
     Item in approval queue.
@@ -46,6 +55,11 @@ class ApprovalQueueItem:
         sniper_targets: Optional[List[Dict]] = None,
         published_languages: Optional[Dict[str, bool]] = None,
         published_urls: Optional[Dict[str, str]] = None,
+        publish_state: Optional[str] = None,
+        active_language: Optional[str] = None,
+        last_error: Optional[str] = None,
+        publish_started_at: Optional[datetime] = None,
+        last_publish_attempt_at: Optional[datetime] = None,
     ):
         """
         Initialize approval queue item.
@@ -86,6 +100,11 @@ class ApprovalQueueItem:
         self.published_languages.setdefault("tr", False)
         self.published_languages.setdefault("en", False)
         self.published_urls = dict(published_urls or {})
+        self.publish_state = publish_state or PublishState.IDLE.value
+        self.active_language = active_language
+        self.last_error = last_error
+        self.publish_started_at = publish_started_at
+        self.last_publish_attempt_at = last_publish_attempt_at
     
     def _generate_id(self) -> str:
         """Generate unique tweet ID"""
@@ -110,6 +129,11 @@ class ApprovalQueueItem:
             'sniper_targets': self.sniper_targets,
             'published_languages': self.published_languages,
             'published_urls': self.published_urls,
+            'publish_state': self.publish_state,
+            'active_language': self.active_language,
+            'last_error': self.last_error,
+            'publish_started_at': self.publish_started_at.isoformat() if self.publish_started_at else None,
+            'last_publish_attempt_at': self.last_publish_attempt_at.isoformat() if self.last_publish_attempt_at else None,
             'content_item': {
                 'title': self.content_item.title,
                 'url': self.content_item.url,
@@ -160,6 +184,11 @@ class ApprovalQueueItem:
             sniper_targets=data.get('sniper_targets', []),
             published_languages=data.get('published_languages', {}),
             published_urls=data.get('published_urls', {}),
+            publish_state=data.get('publish_state', PublishState.IDLE.value),
+            active_language=data.get('active_language'),
+            last_error=data.get('last_error'),
+            publish_started_at=datetime.fromisoformat(data['publish_started_at']) if data.get('publish_started_at') else None,
+            last_publish_attempt_at=datetime.fromisoformat(data['last_publish_attempt_at']) if data.get('last_publish_attempt_at') else None,
         )
 
 
@@ -276,6 +305,11 @@ class ApprovalQueue:
         item.status = ApprovalStatus.APPROVED
         item.approved_at = datetime.now()
         item.notes = notes
+        item.last_error = None
+        item.active_language = None
+        item.publish_started_at = None
+        item.last_publish_attempt_at = None
+        item.publish_state = PublishState.PARTIAL.value if any(item.published_languages.values()) else PublishState.IDLE.value
         
         self._save()
         get_interaction_tracker().record_event(
@@ -311,6 +345,8 @@ class ApprovalQueue:
         item.status = ApprovalStatus.REJECTED
         item.approved_at = datetime.now()
         item.notes = reason
+        item.active_language = None
+        item.publish_state = PublishState.IDLE.value
         
         self._save()
         get_interaction_tracker().record_event(
@@ -345,6 +381,8 @@ class ApprovalQueue:
         item = self.items[tweet_id]
         item.generated_tweet = new_text
         item.status = ApprovalStatus.EDITED
+        item.last_error = None
+        item.publish_state = PublishState.PARTIAL.value if any(item.published_languages.values()) else PublishState.IDLE.value
         
         self._save()
         
@@ -365,6 +403,10 @@ class ApprovalQueue:
             item for item in self.items.values()
             if item.status in [ApprovalStatus.APPROVED, ApprovalStatus.EDITED]
         ]
+
+    def get_all(self) -> List[ApprovalQueueItem]:
+        """Get all queue items."""
+        return list(self.items.values())
     
     def _save(self):
         """Save queue to file"""

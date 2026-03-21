@@ -40,7 +40,7 @@ from approval_manager import get_approval_manager, OperationType as ApprovalOpTy
 from safety_logger import get_safety_logger
 
 # Approval queue for content items
-from approval.approval_queue import approval_queue, ApprovalStatus
+from approval.approval_queue import approval_queue, ApprovalStatus, PublishState
 from interaction_tracker import get_interaction_tracker
 from sniper_guard import build_focus_keywords, is_relevant_for_sniper
 
@@ -79,6 +79,13 @@ def _is_language_published(item: Any, lang: str) -> bool:
     return bool(published.get(lang, False))
 
 
+def _publish_state_value(item: Any) -> str:
+    publish_state = getattr(item, "publish_state", "")
+    if hasattr(publish_state, "value"):
+        return str(publish_state.value)
+    return str(publish_state or PublishState.IDLE.value)
+
+
 def _status_value(item: Any) -> str:
     status = getattr(item, "status", "")
     if hasattr(status, "value"):
@@ -102,9 +109,28 @@ def _mark_language_published(item: Any, lang: str, tweet_url: str) -> None:
     item.published_languages[lang] = True
     if tweet_url:
         item.published_urls[lang] = tweet_url
+    item.active_language = None
+    item.last_error = None
+    item.publish_started_at = None
+    item.last_publish_attempt_at = datetime.now()
 
     if _all_required_languages_published(item):
         item.status = ApprovalStatus.PROCESSED
+        item.publish_state = PublishState.COMPLETED.value
+    else:
+        item.publish_state = PublishState.PARTIAL.value
+
+
+def _can_publish_item(item: Any) -> bool:
+    return _status_value(item) in {ApprovalStatus.APPROVED.value, ApprovalStatus.EDITED.value}
+
+
+async def _reserve_publish_slot(item_id: str) -> bool:
+    async with _auto_thread_lock:
+        if item_id in _auto_thread_inflight:
+            return False
+        _auto_thread_inflight.add(item_id)
+        return True
 
 
 def _fit_tweet(text: str, limit: int = 270) -> str:
@@ -160,7 +186,10 @@ def _pick_next_auto_publish_candidate(lang_order: List[str]) -> Optional[tuple[s
     candidates: List[Any] = []
     for item in approval_queue.items.values():
         status_val = _status_value(item)
+        publish_state = _publish_state_value(item)
         if status_val not in {"approved", "edited"}:
+            continue
+        if publish_state in {PublishState.PUBLISHING.value, PublishState.FAILED.value}:
             continue
         candidates.append(item)
 
@@ -182,7 +211,7 @@ def _pick_next_auto_publish_candidate(lang_order: List[str]) -> Optional[tuple[s
     return None
 
 
-async def _publish_thread_chain(item_id: str, lang: str, source: str = "desktop") -> Dict[str, Any]:
+async def _publish_thread_chain(item_id: str, lang: str, source: str = "desktop", slot_reserved: bool = False) -> Dict[str, Any]:
     lang = (lang or "tr").lower()
     if lang not in {"tr", "en"}:
         return {"status": "error", "message": f"Unsupported lang: {lang}"}
@@ -191,6 +220,13 @@ async def _publish_thread_chain(item_id: str, lang: str, source: str = "desktop"
         return {"status": "error", "message": f"Thread not found: {item_id}"}
 
     item = approval_queue.items[item_id]
+    if not _can_publish_item(item):
+        return {
+            "status": "error",
+            "message": f"Item publish için uygun değil: {_status_value(item)}",
+            "item_id": item_id,
+            "lang": lang,
+        }
     if _is_language_published(item, lang):
         return {
             "status": "info",
@@ -208,15 +244,22 @@ async def _publish_thread_chain(item_id: str, lang: str, source: str = "desktop"
             "lang": lang,
         }
 
-    async with _auto_thread_lock:
-        if item_id in _auto_thread_inflight:
+    if not slot_reserved:
+        reserved = await _reserve_publish_slot(item_id)
+        if not reserved:
             return {
                 "status": "info",
                 "message": "Bu item zaten yayın kuyruğunda",
                 "item_id": item_id,
                 "lang": lang,
             }
-        _auto_thread_inflight.add(item_id)
+
+    item.publish_state = PublishState.PUBLISHING.value
+    item.active_language = lang
+    item.last_error = None
+    item.publish_started_at = datetime.now()
+    item.last_publish_attempt_at = datetime.now()
+    approval_queue._save()
 
     tracker = get_interaction_tracker()
     tracker.record_event(
@@ -339,6 +382,11 @@ async def _publish_thread_chain(item_id: str, lang: str, source: str = "desktop"
         }
 
     except Exception as e:
+        item.active_language = None
+        item.last_error = str(e)
+        item.publish_started_at = None
+        item.last_publish_attempt_at = datetime.now()
+        item.publish_state = PublishState.FAILED.value
         tracker.record_event(
             action="thread_publish",
             status="failed",
@@ -393,8 +441,10 @@ async def _auto_thread_scheduler_loop() -> None:
                 candidate = _pick_next_auto_publish_candidate(lang_order)
                 if candidate:
                     item_id, lang = candidate
-                    asyncio.create_task(_publish_thread_chain(item_id=item_id, lang=lang, source="scheduler"))
-                    logger.info(f"📤 Auto scheduler queued {item_id} ({lang})")
+                    reserved = await _reserve_publish_slot(item_id)
+                    if reserved:
+                        asyncio.create_task(_publish_thread_chain(item_id=item_id, lang=lang, source="scheduler", slot_reserved=True))
+                        logger.info(f"📤 Auto scheduler queued {item_id} ({lang})")
                 else:
                     logger.info("ℹ️ Auto scheduler tick: no approved unpublished threads")
                 last_minute_key = minute_key
@@ -1228,6 +1278,67 @@ async def get_pending_approvals():
         }
 
 
+@app.get("/approval/items")
+async def get_approval_items():
+    """Get all approval items with summary counts for UI tabs."""
+    try:
+        items = approval_queue.get_all()
+        items.sort(key=lambda x: (x.approved_at or x.created_at or datetime.min), reverse=True)
+
+        serialized = [item.to_dict() for item in items]
+        summary = {
+            "pending": 0,
+            "approved": 0,
+            "publishing": 0,
+            "failed": 0,
+            "processed": 0,
+            "rejected": 0,
+        }
+
+        for item in items:
+            status_val = _status_value(item)
+            publish_state = _publish_state_value(item)
+            if status_val == ApprovalStatus.PENDING.value:
+                summary["pending"] += 1
+            elif status_val == ApprovalStatus.REJECTED.value:
+                summary["rejected"] += 1
+            elif status_val == ApprovalStatus.PROCESSED.value or publish_state == PublishState.COMPLETED.value:
+                summary["processed"] += 1
+            elif publish_state == PublishState.PUBLISHING.value:
+                summary["publishing"] += 1
+            elif publish_state == PublishState.FAILED.value:
+                summary["failed"] += 1
+            else:
+                summary["approved"] += 1
+
+        return {
+            "status": "success",
+            "data": {
+                "items": serialized,
+                "total": len(serialized),
+                "summary": summary,
+            }
+        }
+    except Exception as e:
+        logger.error(f"❌ Error fetching approval items: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "data": {
+                "items": [],
+                "total": 0,
+                "summary": {
+                    "pending": 0,
+                    "approved": 0,
+                    "publishing": 0,
+                    "failed": 0,
+                    "processed": 0,
+                    "rejected": 0,
+                },
+            }
+        }
+
+
 @app.post("/approval/approve-all-threads")
 async def approve_all_pending():
     """Approve all pending threads at once"""
@@ -1260,6 +1371,14 @@ async def post_thread(
             return {"status": "error", "message": "lang must be tr or en"}
 
         item = approval_queue.items[item_id]
+        if not _can_publish_item(item):
+            return {
+                "status": "error",
+                "message": f"Bu item yayınlanamaz. Durum: {_status_value(item)}",
+                "item_id": item_id,
+                "lang": selected_lang,
+            }
+
         if not _thread_for_language(item, selected_lang):
             return {
                 "status": "error",
@@ -1277,7 +1396,16 @@ async def post_thread(
             }
 
         thread = _build_publishable_thread(item, selected_lang)
-        background_tasks.add_task(_publish_thread_chain, item_id, selected_lang, "desktop")
+        reserved = await _reserve_publish_slot(item_id)
+        if not reserved:
+            return {
+                "status": "info",
+                "message": "Bu item zaten yayın kuyruğunda",
+                "item_id": item_id,
+                "lang": selected_lang,
+            }
+
+        background_tasks.add_task(_publish_thread_chain, item_id, selected_lang, "desktop", True)
 
         return {
             "status": "success",

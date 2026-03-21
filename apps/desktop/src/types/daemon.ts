@@ -139,25 +139,67 @@ export type ContentCategory =
 /**
  * Single approval item from pending queue
  */
-export interface ApprovalItem {
-  id: string;
+export type ApprovalStatusValue =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "edited"
+  | "processed";
+
+export type PublishStateValue =
+  | "idle"
+  | "publishing"
+  | "partial"
+  | "failed"
+  | "completed";
+
+export interface ApprovalContentItem {
   title: string;
-  category: ContentCategory;
-  source: string;
-  source_type: string;
   url: string;
-  description?: string;
-  content?: string;
-  author?: string;
-  published_at: string;
-  created_at: string;
+  source_name: string;
+  source_type: string;
+  category: ContentCategory | string | null;
+}
+
+export interface ApprovalSniperTarget {
+  username: string;
+  handle: string;
+  name: string;
   relevance_score: number;
-  engagement_score: number;
-  suggested_tweet?: string;
-  ai_summary?: string;
-  images?: string[];
-  tags?: string[];
-  metadata?: Record<string, any>;
+}
+
+export interface ApprovalItem {
+  id?: string;
+  tweet_id: string;
+  generated_tweet: string;
+  status: ApprovalStatusValue;
+  created_at: string;
+  approved_at?: string | null;
+  notes?: string | null;
+  viral_score: number;
+  tr_thread: string[];
+  en_thread: string[];
+  mentions: string[];
+  keywords: string[];
+  image_url?: string | null;
+  sniper_targets: ApprovalSniperTarget[];
+  published_languages?: Record<string, boolean>;
+  published_urls?: Record<string, string>;
+  publish_state?: PublishStateValue;
+  active_language?: string | null;
+  last_error?: string | null;
+  publish_started_at?: string | null;
+  last_publish_attempt_at?: string | null;
+  content_item: ApprovalContentItem;
+}
+
+export interface ApprovalSummary {
+  pending: number;
+  approved: number;
+  publishing: number;
+  failed: number;
+  processed: number;
+  rejected: number;
 }
 
 /**
@@ -166,8 +208,9 @@ export interface ApprovalItem {
 export interface ApprovalResponse {
   status: "success" | "error";
   data: {
-    pending_count: number;
+    total: number;
     items: ApprovalItem[];
+    summary?: ApprovalSummary;
   };
   message?: string;
 }
