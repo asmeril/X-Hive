@@ -113,6 +113,12 @@ def _mark_language_published(item: Any, lang: str, tweet_url: str) -> None:
     item.last_error = None
     item.publish_started_at = None
     item.last_publish_attempt_at = datetime.now()
+    if not hasattr(item, "publish_progress") or item.publish_progress is None:
+        item.publish_progress = {}
+    progress = dict(item.publish_progress.get(lang, {}) or {})
+    progress["completed"] = True
+    progress["updated_at"] = datetime.now().isoformat()
+    item.publish_progress[lang] = progress
 
     if _all_required_languages_published(item):
         item.status = ApprovalStatus.PROCESSED
@@ -275,9 +281,20 @@ async def _publish_thread_chain(item_id: str, lang: str, source: str = "desktop"
     previous_url = None
     previous_tweet_id = None
     first_tweet_url = None
+    start_index = 0
+
+    if not hasattr(item, "publish_progress") or item.publish_progress is None:
+        item.publish_progress = {}
+    lang_progress = dict(item.publish_progress.get(lang, {}) or {})
+    if source == "retry" and lang_progress:
+        start_index = int(lang_progress.get("posted_count", 0) or 0)
+        previous_url = str(lang_progress.get("last_tweet_url") or "") or None
+        previous_tweet_id = str(lang_progress.get("last_tweet_id") or "") or None
+        first_tweet_url = str(lang_progress.get("first_tweet_url") or "") or None
 
     try:
-        for i, tweet_text in enumerate(thread):
+        for i in range(start_index, len(thread)):
+            tweet_text = thread[i]
             if i == 0:
                 images = None
                 if item.image_url:
@@ -338,6 +355,15 @@ async def _publish_thread_chain(item_id: str, lang: str, source: str = "desktop"
 
                 logger.info(f"🐦 [{lang}] Thread tweet {i+1}/{len(thread)} posted")
 
+            item.publish_progress[lang] = {
+                "posted_count": i + 1,
+                "last_tweet_url": previous_url or "",
+                "last_tweet_id": previous_tweet_id or "",
+                "first_tweet_url": first_tweet_url or "",
+                "updated_at": datetime.now().isoformat(),
+            }
+            approval_queue._save()
+
             await asyncio.sleep(random.uniform(25, 45))
 
         _mark_language_published(item, lang, first_tweet_url or "")
@@ -387,6 +413,15 @@ async def _publish_thread_chain(item_id: str, lang: str, source: str = "desktop"
         item.publish_started_at = None
         item.last_publish_attempt_at = datetime.now()
         item.publish_state = PublishState.FAILED.value
+        item.publish_progress[lang] = {
+            **dict(item.publish_progress.get(lang, {}) or {}),
+            "posted_count": int(dict(item.publish_progress.get(lang, {}) or {}).get("posted_count", 0) or 0),
+            "last_tweet_url": previous_url or "",
+            "last_tweet_id": previous_tweet_id or "",
+            "first_tweet_url": first_tweet_url or "",
+            "completed": False,
+            "updated_at": datetime.now().isoformat(),
+        }
         tracker.record_event(
             action="thread_publish",
             status="failed",
@@ -1421,6 +1456,74 @@ async def post_thread(
         raise
     except Exception as e:
         logger.error(f"❌ Thread post failed: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/approval/retry-thread/{item_id}")
+async def retry_thread(
+    item_id: str,
+    background_tasks: BackgroundTasks,
+    lang: str = Query("", description="Retry language: tr or en. Empty = active/failed lang"),
+):
+    """Retry a failed thread publish and resume from stored progress when possible."""
+    try:
+        if item_id not in approval_queue.items:
+            raise HTTPException(status_code=404, detail=f"Thread not found: {item_id}")
+
+        item = approval_queue.items[item_id]
+        if _publish_state_value(item) != PublishState.FAILED.value:
+            return {
+                "status": "error",
+                "message": "Retry sadece failed item'lar için kullanılabilir",
+                "item_id": item_id,
+            }
+
+        selected_lang = (lang or item.active_language or "").strip().lower()
+        if not selected_lang:
+            for candidate_lang in ["tr", "en"]:
+                if _thread_for_language(item, candidate_lang) and not _is_language_published(item, candidate_lang):
+                    selected_lang = candidate_lang
+                    break
+
+        if selected_lang not in {"tr", "en"}:
+            return {
+                "status": "error",
+                "message": "Retry language belirlenemedi",
+                "item_id": item_id,
+            }
+
+        if not _thread_for_language(item, selected_lang):
+            return {
+                "status": "error",
+                "message": f"{selected_lang.upper()} thread bulunamadı",
+                "item_id": item_id,
+                "lang": selected_lang,
+            }
+
+        reserved = await _reserve_publish_slot(item_id)
+        if not reserved:
+            return {
+                "status": "info",
+                "message": "Bu item zaten yayın kuyruğunda",
+                "item_id": item_id,
+                "lang": selected_lang,
+            }
+
+        background_tasks.add_task(_publish_thread_chain, item_id, selected_lang, "retry", True)
+        progress = dict((getattr(item, "publish_progress", {}) or {}).get(selected_lang, {}) or {})
+        posted_count = int(progress.get("posted_count", 0) or 0)
+        return {
+            "status": "success",
+            "message": f"{selected_lang.upper()} retry kuyruğa alındı",
+            "item_id": item_id,
+            "lang": selected_lang,
+            "resume_from": posted_count + 1,
+            "posted_count": posted_count,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Retry thread failed: {e}")
         return {"status": "error", "message": str(e)}
 
 

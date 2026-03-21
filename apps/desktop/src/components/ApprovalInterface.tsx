@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { ApprovalItem, ApprovalResponse, ApprovalSummary, PublishStateValue } from "../types/daemon";
+import type { ApprovalFilters, ApprovalItem, ApprovalResponse, ApprovalSummary, PublishStateValue } from "../types/daemon";
 
 const VIRAL_COLORS: Record<string, string> = {
   high: "#22c55e",   // 8-10
@@ -37,6 +37,11 @@ const ApprovalInterface: React.FC = () => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [langTab, setLangTab] = useState<Record<string, "tr" | "en">>({});
   const [activeTab, setActiveTab] = useState<"pending" | "approved" | "publishing" | "failed" | "processed">("pending");
+  const [filters, setFilters] = useState<ApprovalFilters>({
+    category: "all",
+    source: "all",
+    searchQuery: "",
+  });
 
   const fetchItems = useCallback(async (showSpinner: boolean = true): Promise<number> => {
     try {
@@ -143,6 +148,27 @@ const ApprovalInterface: React.FC = () => {
     }
   };
 
+  const handleRetryThread = async (itemId: string, lang?: "tr" | "en") => {
+    try {
+      const endpoint = lang
+        ? `/approval/retry-thread/${itemId}?lang=${lang}`
+        : `/approval/retry-thread/${itemId}`;
+      const response = await invoke<string>("call_worker_api", {
+        method: "POST",
+        endpoint,
+      });
+      const parsed = JSON.parse(response);
+      if (parsed.status === "success") {
+        await fetchItems(false);
+        setError(null);
+      } else {
+        setError(parsed.message || "Retry başlatılamadı");
+      }
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
   const handleSniperReply = async (itemId: string) => {
     try {
       const response = await invoke<string>("call_worker_api", {
@@ -162,14 +188,30 @@ const ApprovalInterface: React.FC = () => {
 
   const handleApproveAll = async () => {
     try {
-      const response = await invoke<string>("call_worker_api", {
-        method: "POST",
-        endpoint: "/approval/approve-all-threads",
-      });
-      const parsed = JSON.parse(response);
-      if (parsed.status === "success") {
-        await fetchItems(false);
+      const pendingVisible = filteredItems.filter((item) => item.status === "pending");
+      for (const item of pendingVisible) {
+        const response = await invoke<string>("call_worker_api", {
+          method: "POST",
+          endpoint: `/approval/approve/${item.tweet_id}`,
+        });
+        const parsed = JSON.parse(response);
+        if (parsed.status !== "success") {
+          throw new Error(parsed.message || `${item.tweet_id} onaylanamadı`);
+        }
       }
+      await fetchItems(false);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  const handleRetryVisibleFailed = async () => {
+    try {
+      const failedItems = filteredItems.filter((item) => item.publish_state === "failed");
+      for (const item of failedItems) {
+        await handleRetryThread(item.tweet_id);
+      }
+      await fetchItems(false);
     } catch (e: any) {
       setError(e.message);
     }
@@ -192,6 +234,24 @@ const ApprovalInterface: React.FC = () => {
     if (activeTab === "failed") return publishState === "failed";
     if (activeTab === "processed") return item.status === "processed" || publishState === "completed";
     return false;
+  });
+
+  const sourceOptions = Array.from(new Set(items.map((item) => item.content_item?.source_name).filter(Boolean))).sort();
+  const categoryOptions = Array.from(new Set(items.map((item) => item.content_item?.category).filter(Boolean))).sort();
+
+  const filteredItems = tabItems.filter((item) => {
+    const search = filters.searchQuery.trim().toLowerCase();
+    const matchesSearch = !search || [
+      item.generated_tweet,
+      item.content_item?.title,
+      item.content_item?.source_name,
+      ...(item.keywords || []),
+      ...(item.mentions || []),
+    ].filter(Boolean).some((value) => String(value).toLowerCase().includes(search));
+
+    const matchesSource = filters.source === "all" || item.content_item?.source_name === filters.source;
+    const matchesCategory = filters.category === "all" || item.content_item?.category === filters.category;
+    return matchesSearch && matchesSource && matchesCategory;
   });
 
   const tabButton = (
@@ -299,6 +359,117 @@ const ApprovalInterface: React.FC = () => {
           {tabButton("processed", "Tamamlanan", summary.processed)}
         </div>
 
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(220px, 1.6fr) minmax(150px, 1fr) minmax(150px, 1fr) auto",
+          gap: "12px",
+          marginBottom: "20px",
+          alignItems: "center",
+        }}>
+          <input
+            value={filters.searchQuery}
+            onChange={(e) => setFilters((prev) => ({ ...prev, searchQuery: e.target.value }))}
+            placeholder="Başlık, tweet, mention, keyword ara"
+            style={{
+              backgroundColor: "#1e293b",
+              color: "white",
+              border: "1px solid #334155",
+              borderRadius: "8px",
+              padding: "10px 12px",
+              fontSize: "14px",
+            }}
+          />
+          <select
+            value={filters.source}
+            onChange={(e) => setFilters((prev) => ({ ...prev, source: e.target.value }))}
+            style={{
+              backgroundColor: "#1e293b",
+              color: "white",
+              border: "1px solid #334155",
+              borderRadius: "8px",
+              padding: "10px 12px",
+              fontSize: "14px",
+            }}
+          >
+            <option value="all">Tüm kaynaklar</option>
+            {sourceOptions.map((source) => (
+              <option key={source} value={source}>{source}</option>
+            ))}
+          </select>
+          <select
+            value={filters.category}
+            onChange={(e) => setFilters((prev) => ({ ...prev, category: e.target.value as ApprovalFilters["category"] }))}
+            style={{
+              backgroundColor: "#1e293b",
+              color: "white",
+              border: "1px solid #334155",
+              borderRadius: "8px",
+              padding: "10px 12px",
+              fontSize: "14px",
+            }}
+          >
+            <option value="all">Tüm kategoriler</option>
+            {categoryOptions.map((category) => (
+              <option key={String(category)} value={String(category)}>{String(category)}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => setFilters({ category: "all", source: "all", searchQuery: "" })}
+            style={{
+              backgroundColor: "#334155",
+              color: "white",
+              border: "1px solid #475569",
+              borderRadius: "8px",
+              padding: "10px 12px",
+              fontSize: "13px",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            Filtreyi Temizle
+          </button>
+        </div>
+
+        {activeTab === "pending" && filteredItems.length > 0 && (
+          <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
+            <button
+              onClick={handleApproveAll}
+              style={{
+                backgroundColor: "#16a34a",
+                color: "white",
+                padding: "10px 18px",
+                borderRadius: "8px",
+                border: "none",
+                cursor: "pointer",
+                fontSize: "13px",
+                fontWeight: 700,
+              }}
+            >
+              ✅ Görünenleri Onayla ({filteredItems.length})
+            </button>
+          </div>
+        )}
+
+        {activeTab === "failed" && filteredItems.length > 0 && (
+          <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
+            <button
+              onClick={handleRetryVisibleFailed}
+              style={{
+                backgroundColor: "#ea580c",
+                color: "white",
+                padding: "10px 18px",
+                borderRadius: "8px",
+                border: "none",
+                cursor: "pointer",
+                fontSize: "13px",
+                fontWeight: 700,
+              }}
+            >
+              🔁 Görünen Failed Item'ları Retry Et ({filteredItems.length})
+            </button>
+          </div>
+        )}
+
         {/* Loading */}
         {loading && (
           <div style={{ textAlign: "center", padding: "60px" }}>
@@ -318,7 +489,7 @@ const ApprovalInterface: React.FC = () => {
         )}
 
         {/* Empty */}
-        {!loading && tabItems.length === 0 && !error && (
+        {!loading && filteredItems.length === 0 && !error && (
           <div style={{
             textAlign: "center", padding: "60px",
             backgroundColor: "#1e293b", borderRadius: "12px"
@@ -334,9 +505,9 @@ const ApprovalInterface: React.FC = () => {
         )}
 
         {/* Thread Cards */}
-        {tabItems.length > 0 && (
+        {filteredItems.length > 0 && (
           <div style={{ display: "grid", gap: "16px" }}>
-            {tabItems.map((item: ApprovalItem) => {
+            {filteredItems.map((item: ApprovalItem) => {
               const isExpanded = expandedId === item.tweet_id;
               const currentLang = getLang(item.tweet_id);
               const thread = currentLang === "tr" ? (item.tr_thread || []) : (item.en_thread || []);
@@ -646,6 +817,19 @@ const ApprovalInterface: React.FC = () => {
                             }}
                           >
                             🎯 Sniper Reply ({item.sniper_targets.length} hedef)
+                          </button>
+                        )}
+                        {publishState === "failed" && (
+                          <button
+                            onClick={() => handleRetryThread(item.tweet_id, currentLang)}
+                            style={{
+                              backgroundColor: "#f97316", color: "white",
+                              padding: "10px 24px", borderRadius: "8px",
+                              border: "none", cursor: "pointer",
+                              fontSize: "14px", fontWeight: 600,
+                            }}
+                          >
+                            🔁 {currentLang.toUpperCase()} Retry / Resume
                           </button>
                         )}
                         <button

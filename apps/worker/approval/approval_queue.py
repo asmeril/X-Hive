@@ -60,6 +60,7 @@ class ApprovalQueueItem:
         last_error: Optional[str] = None,
         publish_started_at: Optional[datetime] = None,
         last_publish_attempt_at: Optional[datetime] = None,
+        publish_progress: Optional[Dict[str, Dict[str, object]]] = None,
     ):
         """
         Initialize approval queue item.
@@ -105,6 +106,7 @@ class ApprovalQueueItem:
         self.last_error = last_error
         self.publish_started_at = publish_started_at
         self.last_publish_attempt_at = last_publish_attempt_at
+        self.publish_progress = dict(publish_progress or {})
     
     def _generate_id(self) -> str:
         """Generate unique tweet ID"""
@@ -134,6 +136,7 @@ class ApprovalQueueItem:
             'last_error': self.last_error,
             'publish_started_at': self.publish_started_at.isoformat() if self.publish_started_at else None,
             'last_publish_attempt_at': self.last_publish_attempt_at.isoformat() if self.last_publish_attempt_at else None,
+            'publish_progress': self.publish_progress,
             'content_item': {
                 'title': self.content_item.title,
                 'url': self.content_item.url,
@@ -189,6 +192,7 @@ class ApprovalQueueItem:
             last_error=data.get('last_error'),
             publish_started_at=datetime.fromisoformat(data['publish_started_at']) if data.get('publish_started_at') else None,
             last_publish_attempt_at=datetime.fromisoformat(data['last_publish_attempt_at']) if data.get('last_publish_attempt_at') else None,
+            publish_progress=data.get('publish_progress', {}),
         )
 
 
@@ -310,6 +314,8 @@ class ApprovalQueue:
         item.publish_started_at = None
         item.last_publish_attempt_at = None
         item.publish_state = PublishState.PARTIAL.value if any(item.published_languages.values()) else PublishState.IDLE.value
+        if not any(item.published_languages.values()):
+            item.publish_progress = {}
         
         self._save()
         get_interaction_tracker().record_event(
@@ -347,6 +353,7 @@ class ApprovalQueue:
         item.notes = reason
         item.active_language = None
         item.publish_state = PublishState.IDLE.value
+        item.last_error = None
         
         self._save()
         get_interaction_tracker().record_event(
