@@ -44,6 +44,8 @@ class ApprovalQueueItem:
         keywords: Optional[List[str]] = None,
         image_url: Optional[str] = None,
         sniper_targets: Optional[List[Dict]] = None,
+        published_languages: Optional[Dict[str, bool]] = None,
+        published_urls: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize approval queue item.
@@ -79,6 +81,11 @@ class ApprovalQueueItem:
         self.keywords = keywords or []
         self.image_url = image_url
         self.sniper_targets = sniper_targets or []
+        # Per-language publish tracking (TR/EN) for dual-thread workflow.
+        self.published_languages = dict(published_languages or {})
+        self.published_languages.setdefault("tr", False)
+        self.published_languages.setdefault("en", False)
+        self.published_urls = dict(published_urls or {})
     
     def _generate_id(self) -> str:
         """Generate unique tweet ID"""
@@ -101,6 +108,8 @@ class ApprovalQueueItem:
             'keywords': self.keywords,
             'image_url': self.image_url,
             'sniper_targets': self.sniper_targets,
+            'published_languages': self.published_languages,
+            'published_urls': self.published_urls,
             'content_item': {
                 'title': self.content_item.title,
                 'url': self.content_item.url,
@@ -149,6 +158,8 @@ class ApprovalQueueItem:
             keywords=data.get('keywords', []),
             image_url=data.get('image_url'),
             sniper_targets=data.get('sniper_targets', []),
+            published_languages=data.get('published_languages', {}),
+            published_urls=data.get('published_urls', {}),
         )
 
 

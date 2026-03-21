@@ -10,6 +10,7 @@ import os
 import json
 import random
 import re
+from datetime import datetime
 from pathlib import Path
 
 # Force UTF-8 encoding for stdout/stderr on Windows to avoid Unicode errors
@@ -20,7 +21,7 @@ if sys.platform == "win32":
 
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, List, Any
@@ -39,7 +40,7 @@ from approval_manager import get_approval_manager, OperationType as ApprovalOpTy
 from safety_logger import get_safety_logger
 
 # Approval queue for content items
-from approval.approval_queue import approval_queue
+from approval.approval_queue import approval_queue, ApprovalStatus
 from interaction_tracker import get_interaction_tracker
 from sniper_guard import build_focus_keywords, is_relevant_for_sniper
 
@@ -52,6 +53,359 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+_auto_thread_scheduler_task: Optional[asyncio.Task] = None
+_auto_thread_lock = asyncio.Lock()
+_auto_thread_inflight: set[str] = set()
+
+
+def _thread_for_language(item: Any, lang: str) -> List[str]:
+    if (lang or "tr").lower() == "en":
+        return list(item.en_thread or [])
+    return list(item.tr_thread or [])
+
+
+def _available_languages(item: Any) -> List[str]:
+    langs: List[str] = []
+    if item.tr_thread:
+        langs.append("tr")
+    if item.en_thread:
+        langs.append("en")
+    return langs
+
+
+def _is_language_published(item: Any, lang: str) -> bool:
+    published = getattr(item, "published_languages", {}) or {}
+    return bool(published.get(lang, False))
+
+
+def _status_value(item: Any) -> str:
+    status = getattr(item, "status", "")
+    if hasattr(status, "value"):
+        return str(status.value)
+    return str(status)
+
+
+def _all_required_languages_published(item: Any) -> bool:
+    langs = _available_languages(item)
+    if not langs:
+        return True
+    return all(_is_language_published(item, lang) for lang in langs)
+
+
+def _mark_language_published(item: Any, lang: str, tweet_url: str) -> None:
+    if not hasattr(item, "published_languages") or item.published_languages is None:
+        item.published_languages = {}
+    if not hasattr(item, "published_urls") or item.published_urls is None:
+        item.published_urls = {}
+
+    item.published_languages[lang] = True
+    if tweet_url:
+        item.published_urls[lang] = tweet_url
+
+    if _all_required_languages_published(item):
+        item.status = ApprovalStatus.PROCESSED
+
+
+def _fit_tweet(text: str, limit: int = 270) -> str:
+    raw = (text or "").strip()
+    return raw if len(raw) <= limit else (raw[: limit - 1].rstrip() + "…")
+
+
+def _keyword_to_hashtag(keyword: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "", (keyword or ""))
+    if len(cleaned) < 2:
+        return ""
+    return f"#{cleaned[:24]}"
+
+
+def _build_publishable_thread(item: Any, lang: str) -> List[str]:
+    thread = _thread_for_language(item, lang)
+    if not thread:
+        return []
+
+    first = (thread[0] or "").strip()
+    if "🧵" not in first:
+        first = f"🧵 {first}"
+    cta = "Devamı👇" if lang == "tr" else "More👇"
+    if "👇" not in first:
+        first = f"{first}\n\n{cta}"
+
+    mentions = list(getattr(item, "mentions", []) or [])
+    if mentions:
+        first_mention = mentions[0]
+        if first_mention and first_mention not in first:
+            first = f"{first}\n\n{first_mention}"
+        mention_text = " ".join(mentions[:2])
+        if mention_text and mention_text not in first:
+            first = f"{first}\n\n{mention_text}"
+
+    thread[0] = first
+
+    has_hashtag = any("#" in tw for tw in thread)
+    if not has_hashtag:
+        fallback_kw = ""
+        for kw in (getattr(item, "keywords", []) or []):
+            fallback_kw = _keyword_to_hashtag(kw)
+            if fallback_kw:
+                break
+        if not fallback_kw:
+            fallback_kw = "#AI"
+        thread[-1] = f"{thread[-1]}\n\n{fallback_kw}"
+
+    return [_fit_tweet(tw) for tw in thread]
+
+
+def _pick_next_auto_publish_candidate(lang_order: List[str]) -> Optional[tuple[str, str]]:
+    candidates: List[Any] = []
+    for item in approval_queue.items.values():
+        status_val = _status_value(item)
+        if status_val not in {"approved", "edited"}:
+            continue
+        candidates.append(item)
+
+    # Oldest approved first
+    candidates.sort(key=lambda x: (x.approved_at or x.created_at or datetime.min))
+
+    for item in candidates:
+        for lang in lang_order:
+            if lang not in {"tr", "en"}:
+                continue
+            if not _thread_for_language(item, lang):
+                continue
+            if _is_language_published(item, lang):
+                continue
+            if item.tweet_id in _auto_thread_inflight:
+                continue
+            return (item.tweet_id, lang)
+
+    return None
+
+
+async def _publish_thread_chain(item_id: str, lang: str, source: str = "desktop") -> Dict[str, Any]:
+    lang = (lang or "tr").lower()
+    if lang not in {"tr", "en"}:
+        return {"status": "error", "message": f"Unsupported lang: {lang}"}
+
+    if item_id not in approval_queue.items:
+        return {"status": "error", "message": f"Thread not found: {item_id}"}
+
+    item = approval_queue.items[item_id]
+    if _is_language_published(item, lang):
+        return {
+            "status": "info",
+            "message": f"{lang.upper()} thread zaten yayınlanmış",
+            "item_id": item_id,
+            "lang": lang,
+        }
+
+    thread = _build_publishable_thread(item, lang)
+    if not thread:
+        return {
+            "status": "error",
+            "message": f"{lang.upper()} thread boş",
+            "item_id": item_id,
+            "lang": lang,
+        }
+
+    async with _auto_thread_lock:
+        if item_id in _auto_thread_inflight:
+            return {
+                "status": "info",
+                "message": "Bu item zaten yayın kuyruğunda",
+                "item_id": item_id,
+                "lang": lang,
+            }
+        _auto_thread_inflight.add(item_id)
+
+    tracker = get_interaction_tracker()
+    tracker.record_event(
+        action="thread_publish",
+        status="started",
+        item_id=item_id,
+        source=source,
+        details={"tweet_count": len(thread), "lang": lang},
+        viral_score=float(item.viral_score or 0),
+    )
+
+    x_daemon = XDaemon()
+    previous_url = None
+    previous_tweet_id = None
+    first_tweet_url = None
+
+    try:
+        for i, tweet_text in enumerate(thread):
+            if i == 0:
+                images = None
+                if item.image_url:
+                    image_candidate = item.image_url
+                    if isinstance(image_candidate, str) and image_candidate.startswith(("http://", "https://")):
+                        try:
+                            from visibility_engine import download_image
+
+                            local_path = await download_image(
+                                image_candidate,
+                                save_dir=str(Path(settings.DATA_PATH) / "images"),
+                            )
+                            if local_path:
+                                image_candidate = local_path
+                        except Exception as img_err:
+                            logger.warning(f"⚠️ Image pre-download failed: {img_err}")
+
+                    if isinstance(image_candidate, str) and os.path.exists(image_candidate):
+                        images = [image_candidate]
+                    else:
+                        logger.warning(f"⚠️ Image path not usable for upload: {image_candidate}")
+
+                result = await x_daemon.post_tweet(text=tweet_text, images=images)
+                if not result.get("success"):
+                    raise RuntimeError(result.get("error", "First tweet post failed"))
+                first_url = result.get("tweet_url")
+                if not first_url:
+                    raise RuntimeError("First tweet posted but tweet_url missing")
+                previous_url = first_url
+                previous_tweet_id = result.get("tweet_id") or x_daemon._extract_tweet_id_from_url(first_url)
+                first_tweet_url = first_url
+                logger.info(f"🐦 [{lang}] Thread tweet 1/{len(thread)} posted")
+            else:
+                if not previous_url:
+                    raise RuntimeError("Reply chain broken: previous tweet URL is missing")
+                if not previous_tweet_id:
+                    previous_tweet_id = x_daemon._extract_tweet_id_from_url(previous_url)
+                if not previous_tweet_id:
+                    raise RuntimeError("Reply chain broken: previous tweet id is missing")
+
+                result = await x_daemon._post_reply_in_thread(
+                    parent_tweet_url=previous_url,
+                    parent_tweet_id=previous_tweet_id,
+                    text=tweet_text,
+                )
+                if not result.get("success"):
+                    raise RuntimeError(result.get("error", f"Reply {i+1} failed"))
+
+                next_url = result.get("tweet_url") or result.get("reply_url")
+                if not next_url:
+                    raise RuntimeError(f"Reply {i+1} posted but URL missing")
+                previous_url = next_url
+                previous_tweet_id = result.get("tweet_id") or result.get("reply_tweet_id")
+                if not previous_tweet_id:
+                    previous_tweet_id = x_daemon._extract_tweet_id_from_url(next_url)
+                if not previous_tweet_id:
+                    raise RuntimeError(f"Reply {i+1} posted but tweet id missing")
+
+                logger.info(f"🐦 [{lang}] Thread tweet {i+1}/{len(thread)} posted")
+
+            await asyncio.sleep(random.uniform(25, 45))
+
+        _mark_language_published(item, lang, first_tweet_url or "")
+        approval_queue._save()
+
+        tracker.record_event(
+            action="thread_publish",
+            status="success",
+            item_id=item_id,
+            source=source,
+            details={"tweet_count": len(thread), "tweet_url": first_tweet_url or "", "lang": lang},
+            viral_score=float(item.viral_score or 0),
+        )
+        logger.info(f"✅ [{lang}] Thread fully posted: {item_id}")
+
+        try:
+            from telegram_hub import get_telegram_hub
+            tg = get_telegram_hub()
+            if tg._running:
+                await tg.notify_thread_posted(
+                    title=item.content_item.title,
+                    tweet_count=len(thread),
+                    tweet_url=first_tweet_url or "",
+                )
+                await tg.broadcast_thread_to_channel(
+                    title=item.content_item.title,
+                    tr_thread=thread,
+                    x_tweet_url=first_tweet_url or "",
+                    image_url=item.image_url if hasattr(item, "image_url") else None,
+                    viral_score=item.viral_score,
+                )
+        except Exception as tg_err:
+            logger.debug(f"Telegram post notification skipped: {tg_err}")
+
+        return {
+            "status": "success",
+            "message": f"{lang.upper()} thread yayınlandı",
+            "item_id": item_id,
+            "tweet_count": len(thread),
+            "lang": lang,
+            "tweet_url": first_tweet_url or "",
+        }
+
+    except Exception as e:
+        tracker.record_event(
+            action="thread_publish",
+            status="failed",
+            item_id=item_id,
+            source=source,
+            details={"error": str(e), "lang": lang},
+            viral_score=float(item.viral_score or 0),
+        )
+        logger.error(f"❌ [{lang}] Thread publish failed ({item_id}): {e}")
+        approval_queue._save()
+        return {
+            "status": "error",
+            "message": str(e),
+            "item_id": item_id,
+            "lang": lang,
+        }
+    finally:
+        async with _auto_thread_lock:
+            _auto_thread_inflight.discard(item_id)
+
+
+async def _auto_thread_scheduler_loop() -> None:
+    enabled = os.getenv("AUTO_THREAD_SCHEDULER_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        logger.info("ℹ️ Auto thread scheduler disabled (AUTO_THREAD_SCHEDULER_ENABLED=false)")
+        return
+
+    raw_times = os.getenv("AUTO_THREAD_POST_TIMES", "09:00,14:00,20:00")
+    schedule_times = {
+        part.strip()
+        for part in raw_times.split(",")
+        if re.match(r"^\d{2}:\d{2}$", part.strip())
+    }
+    if not schedule_times:
+        schedule_times = {"09:00", "14:00", "20:00"}
+
+    raw_lang_order = os.getenv("AUTO_THREAD_LANG_ORDER", "tr,en")
+    lang_order = [part.strip().lower() for part in raw_lang_order.split(",") if part.strip()]
+    if not lang_order:
+        lang_order = ["tr", "en"]
+
+    logger.info(f"⏱️ Auto thread scheduler active | times={sorted(schedule_times)} | lang_order={lang_order}")
+
+    last_minute_key = ""
+    while True:
+        try:
+            now = datetime.now()
+            hhmm = now.strftime("%H:%M")
+            minute_key = now.strftime("%Y-%m-%d %H:%M")
+
+            if hhmm in schedule_times and minute_key != last_minute_key:
+                candidate = _pick_next_auto_publish_candidate(lang_order)
+                if candidate:
+                    item_id, lang = candidate
+                    asyncio.create_task(_publish_thread_chain(item_id=item_id, lang=lang, source="scheduler"))
+                    logger.info(f"📤 Auto scheduler queued {item_id} ({lang})")
+                else:
+                    logger.info("ℹ️ Auto scheduler tick: no approved unpublished threads")
+                last_minute_key = minute_key
+
+            await asyncio.sleep(15)
+        except asyncio.CancelledError:
+            logger.info("🛑 Auto thread scheduler stopped")
+            break
+        except Exception as e:
+            logger.error(f"Auto thread scheduler loop error: {e}")
+            await asyncio.sleep(15)
 
 
 # ─────────────────────────────────────────────────────────
@@ -76,6 +430,7 @@ async def lifespan(app: FastAPI):
     - Shutdown Chrome Pool
     """
     # ───────── STARTUP ─────────
+    global _auto_thread_scheduler_task
     logger.info("🚀 X-HIVE Worker starting up...")
     
     # Show safety banner (CRITICAL - NEVER SKIP)
@@ -175,6 +530,12 @@ async def lifespan(app: FastAPI):
     
     # Check daily reminder
     safety_logger.check_daily_reminder()
+
+    # Start auto thread scheduler loop (approved -> scheduled publish)
+    try:
+        _auto_thread_scheduler_task = asyncio.create_task(_auto_thread_scheduler_loop())
+    except Exception as e:
+        logger.error(f"❌ Failed to start auto thread scheduler: {e}")
     
     yield
     
@@ -189,6 +550,17 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Telegram Hub stopped")
         except Exception as e:
             logger.error(f"Error stopping Telegram Hub: {e}")
+
+    # Stop auto thread scheduler loop
+    if _auto_thread_scheduler_task is not None:
+        _auto_thread_scheduler_task.cancel()
+        try:
+            await _auto_thread_scheduler_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error stopping auto thread scheduler: {e}")
+        _auto_thread_scheduler_task = None
     
     # Stop X Daemon
     try:
@@ -871,207 +1243,48 @@ async def approve_all_pending():
 
 
 @app.post("/approval/post-thread/{item_id}")
-async def post_thread(item_id: str, background_tasks: BackgroundTasks):
+async def post_thread(
+    item_id: str,
+    background_tasks: BackgroundTasks,
+    lang: str = Query("tr", description="Thread language: tr or en"),
+):
     """
     Onaylanan thread'i X/Twitter'a yayınla.
-    İlk tweeti atar, sonra reply chain olarak devam eder.
-    Görsel varsa ilk tweet'e ekler.
+    Dil seçimi desteklenir (tr/en) ve item sadece tüm mevcut diller yayınlandıktan sonra processed olur.
     """
     try:
         if item_id not in approval_queue.items:
             raise HTTPException(status_code=404, detail=f"Thread not found: {item_id}")
-        
+        selected_lang = (lang or "tr").lower()
+        if selected_lang not in {"tr", "en"}:
+            return {"status": "error", "message": "lang must be tr or en"}
+
         item = approval_queue.items[item_id]
-        tracker = get_interaction_tracker()
-        
-        # Hangi dilde yayınlanacak (default: tr)
-        thread = list(item.tr_thread if item.tr_thread else item.en_thread)
-        if not thread:
-            return {"status": "error", "message": "Thread boş"}
+        if not _thread_for_language(item, selected_lang):
+            return {
+                "status": "error",
+                "message": f"{selected_lang.upper()} thread bulunamadı",
+                "item_id": item_id,
+                "lang": selected_lang,
+            }
 
-        def _fit_tweet(text: str, limit: int = 270) -> str:
-            raw = (text or "").strip()
-            return raw if len(raw) <= limit else (raw[: limit - 1].rstrip() + "…")
+        if _is_language_published(item, selected_lang):
+            return {
+                "status": "info",
+                "message": f"{selected_lang.upper()} thread zaten yayınlanmış",
+                "item_id": item_id,
+                "lang": selected_lang,
+            }
 
-        def _keyword_to_hashtag(keyword: str) -> str:
-            cleaned = re.sub(r"[^A-Za-z0-9_]", "", (keyword or ""))
-            if len(cleaned) < 2:
-                return ""
-            return f"#{cleaned[:24]}"
+        thread = _build_publishable_thread(item, selected_lang)
+        background_tasks.add_task(_publish_thread_chain, item_id, selected_lang, "desktop")
 
-        # Publish-time kalite güvencesi: hook + mention + hashtag.
-        thread[0] = (thread[0] or "").strip()
-        if "🧵" not in thread[0]:
-            thread[0] = f"🧵 {thread[0]}"
-        if "👇" not in thread[0]:
-            thread[0] = f"{thread[0]}\n\nDevamı👇"
-
-        if item.mentions:
-            first_mention = item.mentions[0]
-            if first_mention and first_mention not in thread[0]:
-                thread[0] = f"{thread[0]}\n\n{first_mention}"
-
-        has_hashtag = any("#" in tw for tw in thread)
-        if not has_hashtag:
-            fallback_kw = ""
-            for kw in (item.keywords or []):
-                fallback_kw = _keyword_to_hashtag(kw)
-                if fallback_kw:
-                    break
-            if not fallback_kw:
-                fallback_kw = "#AI"
-            thread[-1] = f"{thread[-1]}\n\n{fallback_kw}"
-
-        thread = [_fit_tweet(tw) for tw in thread]
-
-        tracker.record_event(
-            action="thread_publish",
-            status="started",
-            item_id=item_id,
-            source="desktop",
-            details={"tweet_count": len(thread)},
-            viral_score=float(item.viral_score or 0),
-        )
-        
-        # Mention'ları ilk tweet'e ekle (doğal bir şekilde)
-        if item.mentions:
-            mention_text = " ".join(item.mentions[:2])  # Max 2 mention
-            # İlk tweete mention'ları ekle
-            thread[0] = f"{thread[0]}\n\n{mention_text}"
-        
-        async def _post_thread_chain():
-            """Background'da thread'i X'e at"""
-            x_daemon = XDaemon()
-            previous_url = None
-            previous_tweet_id = None
-            first_tweet_url = None
-            failed_step = 0
-            
-            for i, tweet_text in enumerate(thread):
-                try:
-                    if i == 0:
-                        # İlk tweet (görsel varsa ekle)
-                        images = None
-                        if item.image_url:
-                            image_candidate = item.image_url
-                            if isinstance(image_candidate, str) and image_candidate.startswith(("http://", "https://")):
-                                try:
-                                    from visibility_engine import download_image
-
-                                    local_path = await download_image(
-                                        image_candidate,
-                                        save_dir=str(Path(settings.DATA_PATH) / "images"),
-                                    )
-                                    if local_path:
-                                        image_candidate = local_path
-                                except Exception as img_err:
-                                    logger.warning(f"⚠️ Image pre-download failed: {img_err}")
-
-                            if isinstance(image_candidate, str) and os.path.exists(image_candidate):
-                                images = [image_candidate]
-                            else:
-                                logger.warning(f"⚠️ Image path not usable for upload: {image_candidate}")
-
-                        result = await x_daemon.post_tweet(text=tweet_text, images=images)
-                        if not result.get("success"):
-                            raise RuntimeError(result.get("error", "First tweet post failed"))
-                        first_url = result.get("tweet_url")
-                        if not first_url:
-                            raise RuntimeError("First tweet posted but tweet_url missing")
-                        previous_url = first_url
-                        previous_tweet_id = result.get("tweet_id")
-                        if not previous_tweet_id:
-                            previous_tweet_id = x_daemon._extract_tweet_id_from_url(first_url)
-                        first_tweet_url = first_url
-                        logger.info(f"🐦 Thread tweet 1/{len(thread)} posted")
-                    else:
-                        # Reply chain
-                        if not previous_url:
-                            raise RuntimeError("Reply chain broken: previous tweet URL is missing")
-                        if not previous_tweet_id:
-                            previous_tweet_id = x_daemon._extract_tweet_id_from_url(previous_url)
-                        if not previous_tweet_id:
-                            raise RuntimeError("Reply chain broken: previous tweet id is missing")
-
-                        # Use thread-aware reply flow and keep chaining with returned reply URL.
-                        result = await x_daemon._post_reply_in_thread(
-                            parent_tweet_url=previous_url,
-                            parent_tweet_id=previous_tweet_id,
-                            text=tweet_text,
-                        )
-                        if not result.get("success"):
-                            raise RuntimeError(result.get("error", f"Reply {i+1} failed"))
-
-                        next_url = result.get("tweet_url") or result.get("reply_url")
-                        if not next_url:
-                            raise RuntimeError(f"Reply {i+1} posted but URL missing")
-                        previous_url = next_url
-                        previous_tweet_id = result.get("tweet_id") or result.get("reply_tweet_id")
-                        if not previous_tweet_id:
-                            previous_tweet_id = x_daemon._extract_tweet_id_from_url(next_url)
-                        if not previous_tweet_id:
-                            raise RuntimeError(f"Reply {i+1} posted but tweet id missing")
-
-                        logger.info(f"🐦 Thread tweet {i+1}/{len(thread)} posted")
-                    
-                    # Conservative human-like pacing between thread steps.
-                    await asyncio.sleep(random.uniform(25, 45))
-                    
-                except Exception as e:
-                    logger.error(f"❌ Thread tweet {i+1} failed: {e}")
-                    failed_step = i + 1
-                    tracker.record_event(
-                        action="thread_publish",
-                        status="failed",
-                        item_id=item_id,
-                        source="desktop",
-                        details={"failed_step": i + 1, "error": str(e)},
-                        viral_score=float(item.viral_score or 0),
-                    )
-                    break
-
-            if failed_step == 0:
-                # Mark as processed
-                from approval.approval_queue import ApprovalStatus
-                item.status = ApprovalStatus.PROCESSED
-                approval_queue._save()
-                logger.info(f"✅ Thread fully posted: {item_id}")
-                tracker.record_event(
-                    action="thread_publish",
-                    status="success",
-                    item_id=item_id,
-                    source="desktop",
-                    details={"tweet_count": len(thread), "tweet_url": first_tweet_url or ""},
-                    viral_score=float(item.viral_score or 0),
-                )
-            
-            # 📲 Telegram bildirim + kanal yayını
-            try:
-                from telegram_hub import get_telegram_hub
-                tg = get_telegram_hub()
-                if tg._running:
-                    await tg.notify_thread_posted(
-                        title=item.content_item.title,
-                        tweet_count=len(thread),
-                        tweet_url=first_tweet_url or "",
-                    )
-                    await tg.broadcast_thread_to_channel(
-                        title=item.content_item.title,
-                        tr_thread=thread,
-                        x_tweet_url=first_tweet_url or "",
-                        image_url=item.image_url if hasattr(item, 'image_url') else None,
-                        viral_score=item.viral_score,
-                    )
-            except Exception as tg_err:
-                logger.debug(f"Telegram post notification skipped: {tg_err}")
-        
-        background_tasks.add_task(_post_thread_chain)
-        
         return {
             "status": "success",
-            "message": f"Thread yayınlanıyor ({len(thread)} tweet)",
+            "message": f"{selected_lang.upper()} thread yayın kuyruğuna alındı ({len(thread)} tweet)",
             "item_id": item_id,
             "tweet_count": len(thread),
+            "lang": selected_lang,
             "has_image": bool(item.image_url),
             "mentions": item.mentions,
         }
