@@ -27,6 +27,10 @@ apps/worker/cookies/*.json
 *.sqlite
 *.png
 apps/worker/data/
+!apps/worker/data/telegram/
+!apps/worker/data/telegram/.gitkeep
+apps/worker/data/telegram/*.session
+apps/worker/data/telegram/*.session-journal
 apps/worker/**/__pycache__/
 apps/worker/test_intel*.txt
 apps/worker/test_output.txt

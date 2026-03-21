@@ -6,6 +6,8 @@ Main orchestrator for ChromePool, TaskQueue, and X (Twitter) operations.
 import asyncio
 import json
 import logging
+import re
+from urllib.parse import quote
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -481,10 +483,47 @@ class XDaemon:
                         "error": "Session expired. Cookies may be invalid. Please re-import cookies.",
                     }
                 
-                logger.info("Navigating to /compose/tweet...")
-                await page.goto("https://x.com/compose/tweet", wait_until="commit", timeout=30000)
+                logger.info("Opening top-level compose from home (+) button...")
+                compose_opened = False
+                compose_triggers = [
+                    "a[data-testid='SideNav_NewTweet_Button']",
+                    "button[data-testid='SideNav_NewTweet_Button']",
+                    "div[data-testid='SideNav_NewTweet_Button']",
+                    "a[href='/compose/post']",
+                    "a[href='/compose/tweet']",
+                ]
+                for trigger in compose_triggers:
+                    try:
+                        btn = page.locator(trigger).first
+                        await btn.wait_for(state="visible", timeout=5000)
+                        await btn.click(timeout=5000)
+                        compose_opened = True
+                        break
+                    except Exception:
+                        continue
+
+                if not compose_opened:
+                    logger.error("Top-level compose button not found; aborting for first-tweet safety")
+                    return {
+                        "success": False,
+                        "error": "Top-level compose button not found. Aborted to prevent accidental reply context.",
+                    }
+
                 await HumanBehavior.simulate_page_load_wait()  # Human delay
                 logger.info(f"Compose page current URL: {page.url}")
+
+                # Safety guard: top-level tweet must never be sent from a reply compose context.
+                if await self._is_reply_compose_context(page):
+                    logger.warning("⚠️ Reply compose context detected; hard-resetting compose page")
+                    await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(1.5)
+                    await page.goto("https://x.com/compose/tweet", wait_until="commit", timeout=30000)
+                    await asyncio.sleep(1.5)
+                    if await self._is_reply_compose_context(page):
+                        return {
+                            "success": False,
+                            "error": "Unsafe compose state: reply context detected. Aborted to protect account.",
+                        }
                 
                 # Check again after compose navigation
                 current_url = page.url.lower()
@@ -601,7 +640,7 @@ class XDaemon:
                 if images:
                     for image_path in images:
                         try:
-                            upload_input = await page.locator(
+                            upload_input = page.locator(
                                 self.SELECTORS["upload_button"]
                             ).first
                             await upload_input.set_input_files(image_path)
@@ -661,6 +700,7 @@ class XDaemon:
                 tweet_url = await self._extract_latest_tweet_url(page)
                 if not tweet_url:
                     tweet_url = page.url
+                tweet_id = self._extract_tweet_id_from_url(tweet_url)
 
                 logger.info("✅ Tweet posted successfully")
                 
@@ -670,6 +710,7 @@ class XDaemon:
                 return {
                     "success": True,
                     "tweet_url": tweet_url,
+                    "tweet_id": tweet_id,
                     "text": text,
                 }
 
@@ -682,6 +723,35 @@ class XDaemon:
                     }
                 await asyncio.sleep(2)
 
+    async def _is_reply_compose_context(self, page: Page) -> bool:
+        """Detect whether current compose screen is actually in reply mode."""
+        try:
+            current_url = (page.url or "").lower()
+            if "in_reply_to=" in current_url:
+                return True
+        except Exception:
+            pass
+
+        selectors = [
+            "[data-testid='replyBanner']",
+            "[data-testid='replyingToContext']",
+            "text=Replying to",
+            "text=Yanıtlanıyor",
+        ]
+
+        for selector in selectors:
+            try:
+                loc = page.locator(selector).first
+                count = await page.locator(selector).count()
+                if count == 0:
+                    continue
+                if await loc.is_visible():
+                    return True
+            except Exception:
+                continue
+
+        return False
+
     async def _extract_latest_tweet_url(self, page: Page) -> Optional[str]:
         """
         Try to extract the latest posted tweet URL from timeline/compose contexts.
@@ -690,6 +760,9 @@ class XDaemon:
             "article[data-testid='tweet'] a[href*='/status/']",
             "a[href*='/status/']",
         ]
+
+        latest_url = None
+        latest_id = -1
 
         for selector in selectors:
             try:
@@ -702,13 +775,25 @@ class XDaemon:
                     if "/status/" not in href:
                         continue
                     if href.startswith("http://") or href.startswith("https://"):
-                        return href
-                    if href.startswith("/"):
-                        return f"https://x.com{href}"
-                    return f"https://x.com/{href}"
+                        candidate = href
+                    elif href.startswith("/"):
+                        candidate = f"https://x.com{href}"
+                    else:
+                        candidate = f"https://x.com/{href}"
+
+                    sid = self._extract_tweet_id_from_url(candidate)
+                    if sid and sid.isdigit():
+                        sid_int = int(sid)
+                        if sid_int > latest_id:
+                            latest_id = sid_int
+                            latest_url = candidate
+                    elif not latest_url:
+                        latest_url = candidate
             except Exception:
                 continue
 
+        if latest_url:
+            return latest_url
         if "/status/" in page.url:
             return page.url
         return None
@@ -813,7 +898,7 @@ class XDaemon:
                 "error": str(e),
             }
 
-    async def _post_reply_in_thread(self, parent_tweet_url: str, text: str) -> Dict:
+    async def _post_reply_in_thread(self, parent_tweet_url: str, text: str, parent_tweet_id: Optional[str] = None) -> Dict:
         """
         Post a reply to a specific tweet URL for thread chaining.
         """
@@ -826,6 +911,8 @@ class XDaemon:
 
                 await page.goto(parent_tweet_url, wait_until="domcontentloaded", timeout=30000)
                 await asyncio.sleep(1.5)
+
+                parent_id = parent_tweet_id or self._extract_tweet_id_from_url(parent_tweet_url)
 
                 reply_button = None
                 reply_selectors = [
@@ -842,14 +929,20 @@ class XDaemon:
                     except Exception:
                         continue
 
-                if not reply_button:
-                    raise PlaywrightTimeoutError("Reply button not found")
-
-                try:
-                    await reply_button.click(timeout=5000)
-                except Exception:
-                    await reply_button.click(timeout=5000, force=True)
-                await asyncio.sleep(1.0)
+                if reply_button:
+                    try:
+                        await reply_button.click(timeout=5000)
+                    except Exception:
+                        await reply_button.click(timeout=5000, force=True)
+                    await asyncio.sleep(1.0)
+                else:
+                    # UI reply button can be flaky; open direct reply compose route as fallback.
+                    if not parent_id:
+                        raise PlaywrightTimeoutError("Reply button not found and parent tweet id could not be parsed")
+                    compose_reply_url = f"https://x.com/compose/post?in_reply_to={parent_id}"
+                    logger.warning("Reply button not found, switching to compose reply fallback")
+                    await page.goto(compose_reply_url, wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(1.2)
 
                 compose_box = None
                 compose_selectors = [
@@ -868,27 +961,47 @@ class XDaemon:
                         continue
 
                 if not compose_box:
-                    raise PlaywrightTimeoutError("Reply compose box not found")
+                    if parent_id:
+                        logger.warning("Reply compose box not found, retrying with prefilled compose URL")
+                        prefilled_url = (
+                            f"https://x.com/compose/post?in_reply_to={parent_id}"
+                            f"&text={quote(text, safe='')}"
+                        )
+                        await page.goto(prefilled_url, wait_until="domcontentloaded", timeout=30000)
+                        await asyncio.sleep(1.5)
+                        for selector in compose_selectors:
+                            try:
+                                candidate = page.locator(selector).first
+                                await candidate.wait_for(state="visible", timeout=4000)
+                                compose_box = candidate
+                                break
+                            except Exception:
+                                continue
 
-                try:
-                    await compose_box.click(timeout=5000)
-                except Exception:
+                if not compose_box:
+                    logger.warning("Reply compose box still missing, continuing with prefilled text fallback")
+
+                if compose_box:
                     try:
-                        await compose_box.click(timeout=5000, force=True)
+                        await compose_box.click(timeout=5000)
                     except Exception:
-                        await compose_box.evaluate("el => el.focus()")
+                        try:
+                            await compose_box.click(timeout=5000, force=True)
+                        except Exception:
+                            await compose_box.evaluate("el => el.focus()")
 
                 text_inserted = False
-                try:
-                    await compose_box.fill(text)
-                    await asyncio.sleep(0.5)
-                    current_text = await compose_box.inner_text()
-                    if len(current_text.strip()) >= len(text.strip()) * 0.8:
-                        text_inserted = True
-                except Exception:
-                    pass
+                if compose_box:
+                    try:
+                        await compose_box.fill(text)
+                        await asyncio.sleep(0.5)
+                        current_text = await compose_box.inner_text()
+                        if len(current_text.strip()) >= len(text.strip()) * 0.8:
+                            text_inserted = True
+                    except Exception:
+                        pass
 
-                if not text_inserted:
+                if not text_inserted and compose_box:
                     await compose_box.type(text, delay=20)
                     await asyncio.sleep(0.5)
 
@@ -924,15 +1037,68 @@ class XDaemon:
                 if not post_button:
                     raise PlaywrightTimeoutError("Reply post button not found")
 
+                create_tweet_payload = None
                 try:
-                    await post_button.click(timeout=5000)
+                    async with page.expect_response(
+                        lambda resp: "CreateTweet" in resp.url and resp.request.method.upper() == "POST",
+                        timeout=12000,
+                    ) as create_tweet_resp:
+                        try:
+                            await post_button.click(timeout=5000)
+                        except Exception:
+                            await post_button.evaluate("el => el.click()")
+                    try:
+                        create_tweet_response = await create_tweet_resp.value
+                        create_tweet_payload = await create_tweet_response.json()
+                    except Exception:
+                        create_tweet_payload = None
                 except Exception:
-                    await post_button.evaluate("el => el.click()")
+                    # Fallback: click without response hook if GraphQL event is not observable.
+                    try:
+                        await post_button.click(timeout=5000)
+                    except Exception:
+                        await post_button.evaluate("el => el.click()")
 
                 await asyncio.sleep(2.5)
-                reply_url = await self._extract_latest_tweet_url(page)
+                parent_username = self._extract_username_from_tweet_url(parent_tweet_url)
+                reply_url = self._extract_tweet_url_from_create_tweet_payload(
+                    payload=create_tweet_payload,
+                    fallback_username=parent_username,
+                    parent_tweet_id=parent_id,
+                )
                 if not reply_url:
-                    reply_url = parent_tweet_url
+                    for _ in range(3):
+                        candidate = await self._extract_latest_tweet_url(page)
+                        if candidate and candidate != parent_tweet_url and "/status/" in candidate:
+                            reply_url = candidate
+                            break
+                        await asyncio.sleep(1.0)
+
+                if not reply_url:
+                    # Final fallback: resolve latest post from own profile timeline.
+                    try:
+                        profile_link = await page.locator("a[data-testid='AppTabBar_Profile_Link']").first.get_attribute("href")
+                        profile_username = None
+                        if profile_link:
+                            profile_username = profile_link.strip("/").split("/")[0]
+                        if profile_username:
+                            latest = await self.get_latest_tweet_url(profile_username)
+                            candidate = latest.get("tweet_url") if latest.get("success") else None
+                            if candidate and candidate != parent_tweet_url and "/status/" in candidate:
+                                reply_url = candidate
+                    except Exception:
+                        pass
+
+                if not reply_url or "/status/" not in reply_url:
+                    raise PlaywrightTimeoutError("Reply posted but no status URL detected")
+                if reply_url == parent_tweet_url:
+                    raise PlaywrightTimeoutError("Reply URL equals parent tweet URL")
+
+                reply_tweet_id = self._extract_tweet_id_from_url(reply_url)
+                if not reply_tweet_id:
+                    raise PlaywrightTimeoutError("Reply URL found but tweet id could not be parsed")
+                if parent_id and reply_tweet_id == parent_id:
+                    raise PlaywrightTimeoutError("Reply tweet id equals parent tweet id")
 
                 self.rate_limiter.record_operation(OperationType.REPLY)
                 logger.info("✅ Thread reply posted successfully")
@@ -940,7 +1106,9 @@ class XDaemon:
                 return {
                     "success": True,
                     "reply_url": reply_url,
+                    "reply_tweet_id": reply_tweet_id,
                     "tweet_url": reply_url,
+                    "tweet_id": reply_tweet_id,
                     "text": text,
                 }
 
@@ -953,14 +1121,84 @@ class XDaemon:
                     }
                 await asyncio.sleep(1.5)
 
-            except Exception as e:
-                logger.error(f"Tweet post failed (attempt {attempt}): {e}")
-                if attempt == self.max_retries:
-                    return {
-                        "success": False,
-                        "error": str(e),
-                    }
-                await asyncio.sleep(2)
+    def _extract_tweet_id_from_url(self, tweet_url: str) -> Optional[str]:
+        """Extract numeric status id from a tweet URL."""
+        if not tweet_url:
+            return None
+        match = re.search(r"/status/(\d+)", tweet_url)
+        if not match:
+            return None
+        return match.group(1)
+
+    def _extract_username_from_tweet_url(self, tweet_url: str) -> Optional[str]:
+        """Extract username from a tweet URL like https://x.com/<user>/status/<id>."""
+        if not tweet_url:
+            return None
+        match = re.search(r"x\.com/([^/]+)/status/\d+", tweet_url)
+        if not match:
+            return None
+        return match.group(1)
+
+    def _extract_tweet_url_from_create_tweet_payload(
+        self,
+        payload: Optional[Dict[str, Any]],
+        fallback_username: Optional[str] = None,
+        parent_tweet_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Extract posted tweet URL from X CreateTweet GraphQL payload."""
+        if not isinstance(payload, dict):
+            return None
+
+        rest_id = None
+        screen_name = fallback_username
+        status_ids: List[str] = []
+        tweet_like_ids: List[str] = []
+
+        def walk(node: Any) -> None:
+            nonlocal rest_id, screen_name
+            if isinstance(node, dict):
+                # Prefer explicit status URLs if present.
+                for key in ("expanded_url", "url", "permalink"):
+                    raw = node.get(key)
+                    if isinstance(raw, str):
+                        match = re.search(r"/status/(\d+)", raw)
+                        if match:
+                            sid = match.group(1)
+                            if not parent_tweet_id or sid != parent_tweet_id:
+                                status_ids.append(sid)
+
+                candidate_id = node.get("rest_id")
+                if isinstance(candidate_id, str) and candidate_id.isdigit():
+                    is_tweet_like = (
+                        node.get("__typename") == "Tweet"
+                        or (isinstance(node.get("legacy"), dict) and "full_text" in node.get("legacy", {}))
+                        or ("tweet" in str(node.get("entryId", "")).lower())
+                    )
+                    if is_tweet_like and (not parent_tweet_id or candidate_id != parent_tweet_id):
+                        tweet_like_ids.append(candidate_id)
+
+                if not screen_name:
+                    candidate_name = node.get("screen_name")
+                    if isinstance(candidate_name, str) and candidate_name.strip():
+                        screen_name = candidate_name.strip()
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(payload)
+
+        if status_ids:
+            rest_id = max(status_ids, key=lambda s: int(s))
+        elif tweet_like_ids:
+            rest_id = max(tweet_like_ids, key=lambda s: int(s))
+
+        if not rest_id:
+            return None
+        if not screen_name:
+            return None
+        return f"https://x.com/{screen_name}/status/{rest_id}"
 
     async def reply_to_tweet(self, tweet_url: str, text: str) -> Dict:
         """
@@ -1247,7 +1485,7 @@ class XDaemon:
                 if images:
                     for image_path in images:
                         try:
-                            upload_input = await page.locator(
+                            upload_input = page.locator(
                                 self.SELECTORS["upload_button"]
                             ).first
                             await upload_input.set_input_files(image_path)

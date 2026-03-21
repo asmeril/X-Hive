@@ -339,12 +339,14 @@ async def download_image(image_url: str, save_dir: str = "data/images") -> Optio
         
         timeout = aiohttp.ClientTimeout(total=15)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(image_url, headers=headers, ssl=False) as resp:
+            async with session.get(image_url, headers=headers, ssl=True) as resp:
                 if resp.status != 200:
+                    logger.warning(f"⚠️ Image server {resp.status}: {image_url[:100]}")
                     return None
                 
                 content = await resp.read()
                 if len(content) < 1000:  # Çok küçük, muhtemelen hata
+                    logger.warning(f"⚠️ Image too small ({len(content)}B)")
                     return None
                 
                 with open(filepath, 'wb') as f:
@@ -354,7 +356,7 @@ async def download_image(image_url: str, save_dir: str = "data/images") -> Optio
                 return str(filepath)
                 
     except Exception as e:
-        logger.warning(f"⚠️ Image download failed: {e}")
+        logger.warning(f"⚠️ Image download failed ({type(e).__name__}): {str(e)[:100]}")
         return None
 
 

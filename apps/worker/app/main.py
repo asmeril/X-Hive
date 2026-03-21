@@ -8,6 +8,8 @@ import sys
 import io
 import os
 import json
+import random
+import re
 from pathlib import Path
 
 # Force UTF-8 encoding for stdout/stderr on Windows to avoid Unicode errors
@@ -887,6 +889,41 @@ async def post_thread(item_id: str, background_tasks: BackgroundTasks):
         if not thread:
             return {"status": "error", "message": "Thread boş"}
 
+        def _fit_tweet(text: str, limit: int = 270) -> str:
+            raw = (text or "").strip()
+            return raw if len(raw) <= limit else (raw[: limit - 1].rstrip() + "…")
+
+        def _keyword_to_hashtag(keyword: str) -> str:
+            cleaned = re.sub(r"[^A-Za-z0-9_]", "", (keyword or ""))
+            if len(cleaned) < 2:
+                return ""
+            return f"#{cleaned[:24]}"
+
+        # Publish-time kalite güvencesi: hook + mention + hashtag.
+        thread[0] = (thread[0] or "").strip()
+        if "🧵" not in thread[0]:
+            thread[0] = f"🧵 {thread[0]}"
+        if "👇" not in thread[0]:
+            thread[0] = f"{thread[0]}\n\nDevamı👇"
+
+        if item.mentions:
+            first_mention = item.mentions[0]
+            if first_mention and first_mention not in thread[0]:
+                thread[0] = f"{thread[0]}\n\n{first_mention}"
+
+        has_hashtag = any("#" in tw for tw in thread)
+        if not has_hashtag:
+            fallback_kw = ""
+            for kw in (item.keywords or []):
+                fallback_kw = _keyword_to_hashtag(kw)
+                if fallback_kw:
+                    break
+            if not fallback_kw:
+                fallback_kw = "#AI"
+            thread[-1] = f"{thread[-1]}\n\n{fallback_kw}"
+
+        thread = [_fit_tweet(tw) for tw in thread]
+
         tracker.record_event(
             action="thread_publish",
             status="started",
@@ -906,6 +943,7 @@ async def post_thread(item_id: str, background_tasks: BackgroundTasks):
             """Background'da thread'i X'e at"""
             x_daemon = XDaemon()
             previous_url = None
+            previous_tweet_id = None
             first_tweet_url = None
             failed_step = 0
             
@@ -913,7 +951,27 @@ async def post_thread(item_id: str, background_tasks: BackgroundTasks):
                 try:
                     if i == 0:
                         # İlk tweet (görsel varsa ekle)
-                        images = [item.image_url] if item.image_url else None
+                        images = None
+                        if item.image_url:
+                            image_candidate = item.image_url
+                            if isinstance(image_candidate, str) and image_candidate.startswith(("http://", "https://")):
+                                try:
+                                    from visibility_engine import download_image
+
+                                    local_path = await download_image(
+                                        image_candidate,
+                                        save_dir=str(Path(settings.DATA_PATH) / "images"),
+                                    )
+                                    if local_path:
+                                        image_candidate = local_path
+                                except Exception as img_err:
+                                    logger.warning(f"⚠️ Image pre-download failed: {img_err}")
+
+                            if isinstance(image_candidate, str) and os.path.exists(image_candidate):
+                                images = [image_candidate]
+                            else:
+                                logger.warning(f"⚠️ Image path not usable for upload: {image_candidate}")
+
                         result = await x_daemon.post_tweet(text=tweet_text, images=images)
                         if not result.get("success"):
                             raise RuntimeError(result.get("error", "First tweet post failed"))
@@ -921,16 +979,24 @@ async def post_thread(item_id: str, background_tasks: BackgroundTasks):
                         if not first_url:
                             raise RuntimeError("First tweet posted but tweet_url missing")
                         previous_url = first_url
+                        previous_tweet_id = result.get("tweet_id")
+                        if not previous_tweet_id:
+                            previous_tweet_id = x_daemon._extract_tweet_id_from_url(first_url)
                         first_tweet_url = first_url
                         logger.info(f"🐦 Thread tweet 1/{len(thread)} posted")
                     else:
                         # Reply chain
                         if not previous_url:
                             raise RuntimeError("Reply chain broken: previous tweet URL is missing")
+                        if not previous_tweet_id:
+                            previous_tweet_id = x_daemon._extract_tweet_id_from_url(previous_url)
+                        if not previous_tweet_id:
+                            raise RuntimeError("Reply chain broken: previous tweet id is missing")
 
                         # Use thread-aware reply flow and keep chaining with returned reply URL.
                         result = await x_daemon._post_reply_in_thread(
                             parent_tweet_url=previous_url,
+                            parent_tweet_id=previous_tweet_id,
                             text=tweet_text,
                         )
                         if not result.get("success"):
@@ -940,11 +1006,16 @@ async def post_thread(item_id: str, background_tasks: BackgroundTasks):
                         if not next_url:
                             raise RuntimeError(f"Reply {i+1} posted but URL missing")
                         previous_url = next_url
+                        previous_tweet_id = result.get("tweet_id") or result.get("reply_tweet_id")
+                        if not previous_tweet_id:
+                            previous_tweet_id = x_daemon._extract_tweet_id_from_url(next_url)
+                        if not previous_tweet_id:
+                            raise RuntimeError(f"Reply {i+1} posted but tweet id missing")
 
                         logger.info(f"🐦 Thread tweet {i+1}/{len(thread)} posted")
                     
-                    # Tweet arası bekleme (X rate limit)
-                    await asyncio.sleep(3)
+                    # Conservative human-like pacing between thread steps.
+                    await asyncio.sleep(random.uniform(25, 45))
                     
                 except Exception as e:
                     logger.error(f"❌ Thread tweet {i+1} failed: {e}")

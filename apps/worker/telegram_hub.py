@@ -320,12 +320,12 @@ class TelegramHub:
             preview = "\n\n".join(tr_thread[:3])  # İlk 3 tweet
             escaped_title = self._escape_md(title)
             escaped_preview = self._escape_md(preview)
-            escaped_cta = self._escape_md(cta) if cta else ""
             
             # CTA
             cta = ""
             if x_tweet_url:
                 cta = f"\n\n🔗 Devamını X'te oku 👉 {x_tweet_url}"
+            escaped_cta = self._escape_md(cta) if cta else ""
             
             score_bar = "🔥" * min(int(viral_score), 10) if viral_score else ""
             
