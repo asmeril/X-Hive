@@ -21,6 +21,8 @@ interface ApprovalItem {
   mentions: string[];
   keywords: string[];
   image_url: string | null;
+  published_languages?: Record<string, boolean>;
+  published_urls?: Record<string, string>;
   sniper_targets: Array<{ username: string; handle: string; name: string; relevance_score: number }>;
   content_item: ContentItemData;
 }
@@ -139,15 +141,15 @@ const ApprovalInterface: React.FC = () => {
     }
   };
 
-  const handlePostThread = async (itemId: string) => {
+  const handlePostThread = async (itemId: string, lang: "tr" | "en") => {
     try {
       const response = await invoke<string>("call_worker_api", {
         method: "POST",
-        endpoint: `/approval/post-thread/${itemId}`,
+        endpoint: `/approval/post-thread/${itemId}?lang=${lang}`,
       });
       const parsed = JSON.parse(response);
       if (parsed.status === "success") {
-        setItems(prev => prev.filter(item => item.tweet_id !== itemId));
+        await fetchItems(false);
         setError(null);
       } else {
         setError(parsed.message || "Thread yayınlanamadı");
@@ -314,6 +316,8 @@ const ApprovalInterface: React.FC = () => {
               const thread = currentLang === "tr" ? (item.tr_thread || []) : (item.en_thread || []);
               const viralColor = getViralColor(item.viral_score || 0);
               const hasThread = thread.length > 0;
+              const trPublished = Boolean(item.published_languages?.tr);
+              const enPublished = Boolean(item.published_languages?.en);
 
               return (
                 <div key={item.tweet_id} style={{
@@ -381,6 +385,12 @@ const ApprovalInterface: React.FC = () => {
                         {item.sniper_targets?.length > 0 && (
                           <span style={{ color: "#f59e0b" }}>🎯 {item.sniper_targets.length} hedef</span>
                         )}
+                        <span style={{ color: trPublished ? "#22c55e" : "#6b7280" }}>
+                          🇹🇷 {trPublished ? "yayında" : "yayınlanmadı"}
+                        </span>
+                        <span style={{ color: enPublished ? "#22c55e" : "#6b7280" }}>
+                          🇬🇧 {enPublished ? "yayında" : "yayınlanmadı"}
+                        </span>
                         <span>🕐 {new Date(item.created_at).toLocaleTimeString("tr-TR")}</span>
                       </div>
                     </div>
@@ -557,15 +567,30 @@ const ApprovalInterface: React.FC = () => {
                       {/* Action Buttons */}
                       <div style={{ display: "flex", gap: "12px", marginTop: "16px", flexWrap: "wrap" }}>
                         <button
-                          onClick={() => handlePostThread(item.tweet_id)}
+                          onClick={() => handlePostThread(item.tweet_id, "tr")}
+                          disabled={trPublished || !item.tr_thread?.length}
                           style={{
-                            backgroundColor: "#6366f1", color: "white",
+                            backgroundColor: trPublished ? "#334155" : "#6366f1", color: "white",
                             padding: "10px 24px", borderRadius: "8px",
-                            border: "none", cursor: "pointer",
+                            border: "none", cursor: trPublished ? "not-allowed" : "pointer",
                             fontSize: "14px", fontWeight: 600,
+                            opacity: trPublished ? 0.8 : 1,
                           }}
                         >
-                          🚀 Yayınla (Thread At)
+                          {trPublished ? "✅ TR Yayınlandı" : "🚀 TR Thread Yayınla"}
+                        </button>
+                        <button
+                          onClick={() => handlePostThread(item.tweet_id, "en")}
+                          disabled={enPublished || !item.en_thread?.length}
+                          style={{
+                            backgroundColor: enPublished ? "#334155" : "#0ea5e9", color: "white",
+                            padding: "10px 24px", borderRadius: "8px",
+                            border: "none", cursor: enPublished ? "not-allowed" : "pointer",
+                            fontSize: "14px", fontWeight: 600,
+                            opacity: enPublished ? 0.8 : 1,
+                          }}
+                        >
+                          {enPublished ? "✅ EN Yayınlandı" : "🚀 EN Thread Yayınla"}
                         </button>
                         {item.sniper_targets?.length > 0 && (
                           <button
