@@ -723,6 +723,24 @@ class XDaemon:
                     }
                 await asyncio.sleep(2)
 
+            except Exception as e:
+                error_str = str(e)
+                logger.error(f"Tweet post failed (attempt {attempt}): {e}")
+                # Browser connection lost — restart Chrome pool before retry
+                if any(kw in error_str for kw in ("Connection closed", "Target closed", "TargetClosed", "Broken pipe", "EPIPE")):
+                    logger.warning("🔄 Browser connection lost during tweet post, restarting Chrome pool...")
+                    try:
+                        await self.chrome_pool.restart()
+                        logger.info("✅ Chrome pool restarted")
+                    except Exception as restart_err:
+                        logger.error(f"Chrome pool restart failed: {restart_err}")
+                if attempt == self.max_retries:
+                    return {
+                        "success": False,
+                        "error": error_str,
+                    }
+                await asyncio.sleep(3)
+
     async def _is_reply_compose_context(self, page: Page) -> bool:
         """Detect whether current compose screen is actually in reply mode."""
         try:
@@ -1113,13 +1131,22 @@ class XDaemon:
                 }
 
             except Exception as e:
+                error_str = str(e)
                 logger.warning(f"Thread reply failed (attempt {attempt}): {e}")
+                # Browser connection lost — restart Chrome pool before retry
+                if any(kw in error_str for kw in ("Connection closed", "Target closed", "TargetClosed", "Broken pipe", "EPIPE")):
+                    logger.warning("🔄 Browser connection lost during thread reply, restarting Chrome pool...")
+                    try:
+                        await self.chrome_pool.restart()
+                        logger.info("✅ Chrome pool restarted")
+                    except Exception as restart_err:
+                        logger.error(f"Chrome pool restart failed: {restart_err}")
                 if attempt == self.max_retries:
                     return {
                         "success": False,
-                        "error": str(e),
+                        "error": error_str,
                     }
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(3)
 
     def _extract_tweet_id_from_url(self, tweet_url: str) -> Optional[str]:
         """Extract numeric status id from a tweet URL."""
